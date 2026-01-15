@@ -56,6 +56,7 @@ public class DMLInsightAnalyzer implements ISecurityAnalyzer {
     }
 
    public void evaluate(Boolean useAI, List<User> scope) {
+       System.debug('test1');
        List<String> idList = new List<String>();
         for (User u : scope) idList.add(u.Id);
 
