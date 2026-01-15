@@ -2,4 +2,4 @@ engines:
   pmd:
     fileExclusions:
       - force-app/main/default/classes/Excluded/**
-      - force-app/main/default/classes/DMLAuditAI.cls
+      - force-app/main/default/classes/DMLInsightAnalyzer.cls
