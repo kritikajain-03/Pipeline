@@ -23,7 +23,7 @@ private class DMLInsightAnalyzerTest {
         // Create Database_Audit__c records for testing spike logic
         List<Database_Audit__c> audits = new List<Database_Audit__c>();
 
-        audits.add(new Database_Audit__c(
+        audits.add(new Database_Audit__c(ertyui
             User__c = users[0].Id,
             ObjectName__c = 'Account',
             Operation__c = 'Insert',
