@@ -1,0 +1,91 @@
+name: Salesforce Code Analyzer Workflow
+
+on:
+  pull_request:
+    paths:
+      - 'force-app/main/default/classes/**'
+      - 'sfca-config.yml'
+
+jobs:
+  sfca:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -------------------------------
+      # Checkout repository
+      # -------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 
+      # -------------------------------
+      # Install Salesforce CLI
+      # -------------------------------
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli@latest
+
+      # -------------------------------
+      # Install yq (YAML parser)
+      # -------------------------------
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      # -------------------------------
+      # Read PMD exclusions from config
+      # -------------------------------
+      - name: Read PMD exclusions from sfca-config.yml
+        run: |
+          PMD_EXCLUSIONS=$(yq '.engines.pmd.fileExclusions[]' sfca-config.yml || true)
+          echo "PMD exclusions:"
+          echo "$PMD_EXCLUSIONS"
+          # Convert newlines to space-separated string
+          PMD_EXCLUSIONS=$(echo "$PMD_EXCLUSIONS" | tr '\n' ' ' | sed 's/ $//')
+          echo "PMD_EXCLUSIONS=$PMD_EXCLUSIONS" >> $GITHUB_ENV
+
+      # -------------------------------
+      # Get changed Apex files
+      # -------------------------------
+      - name: Get changed Apex files
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep '^force-app/main/default/classes/.*\.cls$' || true)
+          echo "Changed Apex files (raw):"
+          echo "$CHANGED_FILES"
+          # Convert to space-separated single line
+          CHANGED_FILES=$(echo "$CHANGED_FILES" | tr '\n' ' ' | sed 's/ $//')
+          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
+
+      # -------------------------------
+      # Build final FILES list (apply exclusions)
+      # -------------------------------
+      - name: Resolve final Apex files
+        run: |
+          FINAL_FILES="$CHANGED_FILES"
+          for EXCLUDE in $PMD_EXCLUSIONS; do
+            # Convert ** to .* for regex
+            REGEX=$(echo "$EXCLUDE" | sed 's/\\/.*/g')
+            FINAL_FILES=$(echo "$FINAL_FILES" | tr ' ' '\n' | grep -v -E "$REGEX" || true)
+            FINAL_FILES=$(echo "$FINAL_FILES" | tr '\n' ' ' | sed 's/ $//')
+          done
+          echo "Final Apex files to analyze:"
+          echo "$FINAL_FILES"
+          echo "FILES=$FINAL_FILES" >> $GITHUB_ENV
+
+      - name: Add SF CLI to PATH
+        run: |
+              echo "/usr/local/bin" >> $GITHUB_PATH
+          
+      # -------------------------------
+      # Run Salesforce Code Analyzer
+      # -------------------------------
+      - name: Run Salesforce Code Analyzer
+        id: run-code-analyzer
+        uses: forcedotcom/run-code-analyzer@v2
+        with:
+          run-arguments: --workspace ${{ env.FILES }} --view detail --output-file sfca_results.html 
+          results-artifact-name: salesforce-code-analyzer-results
+          github-token: ${{ github.token }}
