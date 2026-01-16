@@ -75,7 +75,7 @@ public class LoginInsightAnalyzer implements ISecurityAnalyzer{
         
 		Map<Id, Map<Date, Set<String>>> suspiciousByUserDate =new Map<Id, Map<Date, Set<String>>>();
 
-          for (LoginHistory lh :[SELECT UserId, SourceIp FROM LoginHistory WHERE UserId IN :userIds
+          for (LoginHistoryyyy lh :[SELECT UserId, SourceIp FROM LoginHistory WHERE UserId IN :userIds
                 AND LoginTime < :sevenDaysAgo AND LoginTime >= LAST_N_MONTHS:6]) 
           {
                if (!knownIpsByUser.containsKey(lh.UserId)) {
