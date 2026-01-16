@@ -221,3 +221,13 @@ jobs:
           echo "<h2>Metadata Validation Results</h2><pre>" >> validation_report.html
           cat metadata_validation.json >> validation_report.html
           echo "</pre></body></html>" >> validation_report.html
+
+
+      # -------------------------------
+      # 5. Upload Validation Report
+      # -------------------------------
+      - name: Upload Validation Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: salesforce-validation-report
+          path: validation_report.html
