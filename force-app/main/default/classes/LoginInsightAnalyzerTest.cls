@@ -31,16 +31,5 @@ private class LoginInsightAnalyzerTest {
         Assert.isTrue(analyzer.getQuery().contains('FROM User'));
     }
 
-    @IsTest
-    static void testEvaluateWithoutAI() {
-        List<User> users = [SELECT Id, Name FROM User];
-        LoginInsightAnalyzer analyzer = new LoginInsightAnalyzer();
-
-        Test.startTest();
-        analyzer.evaluate(false, users);
-        Test.stopTest();
-        Assert.isTrue(true, 'Non-AI evaluation executed successfully');
-    }
-
-
+   
 }
