@@ -19,7 +19,7 @@ public with sharing class LineChartController {
         Security_Insight__c si = siList[0];
         Date sixMonthsAgo = Date.today().addMonths(-6);
 
-        List<Database_Audit__c> logs = [
+        List<Database__c> logs = [
             SELECT Record_Count__c, Operation__c, ObjectName__c, User__c, LogDate__c
             FROM Database_Audit__c
             WHERE LogDate__c >= :sixMonthsAgo
