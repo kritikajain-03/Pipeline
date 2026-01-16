@@ -37,7 +37,7 @@ public class LineChartControllerTest {
         Map<Date, Integer> result = LineChartController.getAuditData(si.Id);
         Test.stopTest();
 
-        Assert.isTrue(!result.isEmpty(), 'Result should not be empty');
+        Assert.isNotTrue(!result.isEmpty(), 'Result should not be empty');
         Assert.areEqual(12, result.get(Date.today().addDays(-3)),
             'Expected aggregated count 5 + 7 = 12');
     }
