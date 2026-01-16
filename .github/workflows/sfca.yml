@@ -158,6 +158,8 @@ jobs:
           if [ ! -s test_results.json ]; then
             echo '{"error":"Apex tests failed or no results"}' > test_results.json
           fi
+      - name: Install bc
+        run: sudo apt-get update && sudo apt-get install -y bc
 
       # -------------------------------
       # 2. Validate Coverage Threshold (Soft Fail)
@@ -165,7 +167,14 @@ jobs:
       - name: Validate Coverage Threshold (Soft Fail)
         continue-on-error: true
         run: |
-          TOTAL_COVERAGE=$(jq '[.result.coverage.coverage[]?.percentCovered] | add / length' test_results.json 2>/dev/null)
+          set +e   # IMPORTANT: disable immediate exit
+
+          TOTAL_COVERAGE=$(jq -r '
+            if (.result.coverage.coverage | length) > 0
+            then ([.result.coverage.coverage[].percentCovered] | add / length)
+            else 0
+            end
+          ' test_results.json 2>/dev/null)
 
           if [ -z "$TOTAL_COVERAGE" ] || [ "$TOTAL_COVERAGE" = "null" ]; then
             TOTAL_COVERAGE=0
@@ -174,11 +183,12 @@ jobs:
           echo "Total Coverage: $TOTAL_COVERAGE%"
           echo "$TOTAL_COVERAGE" > coverage_value.txt
 
-          if (( $(echo "$TOTAL_COVERAGE < 75" | bc -l) )); then
+          if echo "$TOTAL_COVERAGE < 75" | bc -l | grep -q 1; then
             echo "❌ Coverage below 75% threshold" > coverage_status.txt
           else
             echo "✅ Coverage meets 75% threshold" > coverage_status.txt
           fi
+
 
       # -------------------------------
       # 3. Validate Metadata
