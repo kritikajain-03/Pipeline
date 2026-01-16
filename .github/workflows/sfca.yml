@@ -145,17 +145,29 @@ jobs:
 
 
       # -------------------------------
-      # Run Apex Tests with Coverage
+      # 1. Run Apex Tests (Generates the missing file)
+      # -------------------------------
+      - name: Run Apex Tests
+        run: |
+          # This command creates the test_results.json file that jq is looking for
+          sf apex test run --target-org testOrg --result-format json --code-coverage --wait 30 > test_results.json
+
+      # -------------------------------
+      # 2. Validate Coverage Threshold (Soft Fail)
       # -------------------------------
       - name: Validate Coverage Threshold (Soft Fail)
+        continue-on-error: true
         run: |
+          # Extract coverage and calculate average
           TOTAL_COVERAGE=$(jq '[.result.coverage.coverage[]?.percentCovered] | add / length' test_results.json)
 
+          # Fallback if coverage is missing or null
           if [ -z "$TOTAL_COVERAGE" ] || [ "$TOTAL_COVERAGE" = "null" ]; then
             TOTAL_COVERAGE=0
           fi
 
           echo "Total Coverage: $TOTAL_COVERAGE%"
+          echo "$TOTAL_COVERAGE" > coverage_value.txt
 
           if (( $(echo "$TOTAL_COVERAGE < 75" | bc -l) )); then
             echo "❌ Coverage below 75% threshold" > coverage_status.txt
@@ -163,39 +175,30 @@ jobs:
             echo "✅ Coverage meets 75% threshold" > coverage_status.txt
           fi
 
-          echo "$TOTAL_COVERAGE" > coverage_value.txt
-
-
       # -------------------------------
-      # Validate Metadata
+      # 3. Validate Metadata
       # -------------------------------
       - name: Validate Metadata Deployment
         run: |
           sf project deploy validate --target-org testOrg --json > metadata_validation.json
-          cat metadata_validation.json
 
       # -------------------------------
-      # Generate Consolidated Validation Report
+      # 4. Generate Consolidated Validation Report
       # -------------------------------
       - name: Generate Validation Report
         run: |
+          # Use 'touch' to ensure files exist even if previous steps failed
+          touch coverage_value.txt coverage_status.txt sfca_results.html test_results.json metadata_validation.json
+          
           COVERAGE=$(cat coverage_value.txt)
           STATUS=$(cat coverage_status.txt)
 
-          echo "<html><body><h1>Validation Report</h1>" > validation_report.html
-
-          echo "<h2>Code Analyzer Results</h2>" >> validation_report.html
-          cat sfca_results.html >> validation_report.html
-
+          echo "<html><body style='font-family: sans-serif;'><h1>Validation Report</h1>" > validation_report.html
+          
           echo "<h2>Apex Test Coverage</h2>" >> validation_report.html
           echo "<p><strong>Coverage:</strong> $COVERAGE%</p>" >> validation_report.html
           echo "<p><strong>Status:</strong> $STATUS</p>" >> validation_report.html
 
-          echo "<h2>Raw Apex Test Results</h2><pre>" >> validation_report.html
-          cat test_results.json >> validation_report.html
-          echo "</pre>" >> validation_report.html
-
-          echo "<h2>Metadata Validation</h2><pre>" >> validation_report.html
+          echo "<h2>Metadata Validation Results</h2><pre>" >> validation_report.html
           cat metadata_validation.json >> validation_report.html
           echo "</pre></body></html>" >> validation_report.html
-
