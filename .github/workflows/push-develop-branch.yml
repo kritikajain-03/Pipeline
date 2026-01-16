@@ -1,0 +1,153 @@
+# ------------------------------------------------------------
+# Deploy integration branch to Integration and Staging/UAT orgs
+# ------------------------------------------------------------
+name: Deploy integration branch to integration and staging orgs
+
+on:
+  push:
+    branches:
+      - integration
+    paths:
+      - 'force-app/**'
+
+jobs:
+  deploy-integration-and-staging:
+    runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' }}
+
+    steps:
+    # --------------------------------------------------------
+    # Checkout source
+    # --------------------------------------------------------
+    - name: Checkout source code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    # --------------------------------------------------------
+    # Setup Node
+    # --------------------------------------------------------
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    # --------------------------------------------------------
+    # Install Salesforce CLI
+    # --------------------------------------------------------
+    - name: Install Salesforce CLI
+      run: |
+        npm install --global @salesforce/cli
+        sf version
+
+    # --------------------------------------------------------
+    # Install sfdx-git-delta
+    # --------------------------------------------------------
+    - name: Install sfdx-git-delta
+      run: sf plugins install sfdx-git-delta
+
+    # --------------------------------------------------------
+    # Create delta package
+    # --------------------------------------------------------
+    - name: Create delta package
+      run: |
+        mkdir changed-sources reports
+        sf sgd source delta \
+          --to HEAD \
+          --from HEAD^ \
+          --output changed-sources \
+          --generate-delta \
+          --source force-app
+
+    # ========================================================
+    # INTEGRATION ORG DEPLOYMENT
+    # ========================================================
+
+    # --------------------------------------------------------
+    # Authenticate to Integration Org (JWT)
+    # --------------------------------------------------------
+    - name: Authenticate to Integration Org
+      run: |
+        echo "${{ secrets.JWT_SERVER_KEY_INT }}" > server-int.key
+
+        sf org login jwt \
+          --client-id ${{ secrets.CONSUMER_KEY_INT }} \
+          --jwt-key-file server-int.key \
+          --username ${{ secrets.DEPLOYMENT_USER_NAME_INT }} \
+          --instance-url ${{ vars.INSTANCE_URL_INT }} \
+          --alias integration \
+          --set-default
+
+    # --------------------------------------------------------
+    # Deploy delta to Integration Org
+    # --------------------------------------------------------
+    - name: Deploy delta changes to Integration Org
+      run: |
+        sf project deploy start \
+          --source-dir changed-sources/force-app \
+          --test-level RunLocalTests \
+          --results-dir reports/integration \
+          --json > reports/integration/deploy-result.json
+
+    # --------------------------------------------------------
+    # Deploy destructive changes (Integration)
+    # --------------------------------------------------------
+    - name: Deploy destructive changes to Integration Org
+      run: |
+        if [ -d "changed-sources/destructiveChanges" ]; then
+          sf project deploy start \
+            --metadata-dir changed-sources/destructiveChanges \
+            --ignore-warnings \
+            --results-dir reports/integration
+        fi
+
+    # ========================================================
+    # STAGING / UAT ORG DEPLOYMENT
+    # ========================================================
+
+    # --------------------------------------------------------
+    # Authenticate to Staging/UAT Org (JWT)
+    # --------------------------------------------------------
+    - name: Authenticate to Staging Org
+      run: |
+        echo "${{ secrets.JWT_SERVER_KEY_STG }}" > server-stg.key
+
+        sf org login jwt \
+          --client-id ${{ secrets.CONSUMER_KEY_STG }} \
+          --jwt-key-file server-stg.key \
+          --username ${{ secrets.DEPLOYMENT_USER_NAME_STG }} \
+          --instance-url ${{ vars.INSTANCE_URL_STG }} \
+          --alias staging \
+          --set-default
+
+    # --------------------------------------------------------
+    # Deploy delta to Staging/UAT Org
+    # --------------------------------------------------------
+    - name: Deploy delta changes to Staging Org
+      run: |
+        sf project deploy start \
+          --source-dir changed-sources/force-app \
+          --test-level RunLocalTests \
+          --results-dir reports/staging \
+          --json > reports/staging/deploy-result.json
+
+    # --------------------------------------------------------
+    # Deploy destructive changes (Staging)
+    # --------------------------------------------------------
+    - name: Deploy destructive changes to Staging Org
+      run: |
+        if [ -d "changed-sources/destructiveChanges" ]; then
+          sf project deploy start \
+            --metadata-dir changed-sources/destructiveChanges \
+            --ignore-warnings \
+            --results-dir reports/staging
+        fi
+
+    # --------------------------------------------------------
+    # Upload deployment reports
+    # --------------------------------------------------------
+    - name: Upload Integration & Staging Deployment Reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: integration-staging-deployment-reports
+        path: reports/

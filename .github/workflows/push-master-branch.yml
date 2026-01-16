@@ -1,0 +1,107 @@
+# ------------------------------------------------------------
+# Deploy master branch to Production org
+# ------------------------------------------------------------
+name: Deploy master branch to production org
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'force-app/**'
+
+jobs:
+  deploy-master-to-production:
+    runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' }}
+
+    steps:
+    # --------------------------------------------------------
+    # Checkout source
+    # --------------------------------------------------------
+    - name: Checkout source code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    # --------------------------------------------------------
+    # Install Node (required by SF CLI internally)
+    # --------------------------------------------------------
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    # --------------------------------------------------------
+    # Install Salesforce CLI
+    # --------------------------------------------------------
+    - name: Install Salesforce CLI
+      run: |
+        npm install --global @salesforce/cli
+        sf version
+
+    # --------------------------------------------------------
+    # Authenticate to Production org using JWT
+    # --------------------------------------------------------
+    - name: Authenticate to Production Org (JWT)
+      run: |
+        echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+
+        sf org login jwt \
+          --client-id ${{ secrets.CONSUMER_KEY }} \
+          --jwt-key-file server.key \
+          --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
+          --instance-url ${{ vars.INSTANCE_URL }} \
+          --alias production \
+          --set-default
+
+    # --------------------------------------------------------
+    # Install sfdx-git-delta
+    # --------------------------------------------------------
+    - name: Install sfdx-git-delta
+      run: sf plugins install sfdx-git-delta
+
+    # --------------------------------------------------------
+    # Create delta package
+    # --------------------------------------------------------
+    - name: Create delta package
+      run: |
+        mkdir changed-sources reports
+        sf sgd source delta \
+          --to HEAD \
+          --from HEAD^ \
+          --output changed-sources \
+          --generate-delta \
+          --source force-app
+
+    # --------------------------------------------------------
+    # Deploy delta changes to Production (Run Local Tests)
+    # --------------------------------------------------------
+    - name: Deploy delta changes to Production
+      run: |
+        sf project deploy start \
+          --source-dir changed-sources/force-app \
+          --test-level RunLocalTests \
+          --results-dir reports \
+          --json > reports/deploy-result.json
+
+    # --------------------------------------------------------
+    # Deploy destructive changes (if any)
+    # --------------------------------------------------------
+    - name: Deploy destructive changes
+      run: |
+        if [ -d "changed-sources/destructiveChanges" ]; then
+          sf project deploy start \
+            --metadata-dir changed-sources/destructiveChanges \
+            --ignore-warnings \
+            --results-dir reports
+        fi
+
+    # --------------------------------------------------------
+    # Upload deployment & test reports
+    # --------------------------------------------------------
+    - name: Upload Production Deployment Reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: production-deployment-report
+        path: reports/

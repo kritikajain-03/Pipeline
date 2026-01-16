@@ -1,15 +1,26 @@
-// parsePR.js
 const fs = require('fs');
+const readline = require('readline')
 
-const prBody = fs.readFileSync('./pr_body.txt', 'utf8');
+async function extractTests(){
 
-const regex = /Apex::\[(.*?)\]::Apex/;
-const match = prBody.match(regex);
+    //by default we specify that all tests should run
+    let testsFile = __dirname+'/testsToRun.txt';
+    await fs.promises.writeFile(testsFile,'all');
 
-let tests = 'all';
+    const lines = readline.createInterface({
+        input: fs.createReadStream(__dirname+'/pr_body.txt'),
+        crlfDelay: Infinity
+    });
 
-if (match && match[1]) {
-  tests = match[1].trim();
+    for await (const line of lines) {
+        //special delimeter for apex tests
+        if(line.includes('Apex::[') && line.includes(']::Apex')){
+
+            let tests = line.substring(8,line.length-7);
+            await fs.promises.writeFile(testsFile,tests);
+            await fs.promises.appendFile(testsFile,'\n');
+        }
+    }
 }
 
-fs.writeFileSync('testsToRun.txt', tests);
+extractTests();
