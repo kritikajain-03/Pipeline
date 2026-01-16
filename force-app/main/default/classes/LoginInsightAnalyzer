@@ -53,7 +53,8 @@ public class LoginInsightAnalyzer implements ISecurityAnalyzer{
     }
     @TestVisible
     public void createLoginInsightsWithAlgorithm(List<User> scope) {
-        List<Security_Insight__c> allInsightsToInsert = new List<Security_Insight__c>();
+        
+        List<Security_Insighttttt__c> allInsightsToInsert = new List<Security_Insight__c>();
 
         allInsightsToInsert.addAll(detectFailedAttempts(scope));
         allInsightsToInsert.addAll(detectUnusualIPs(scope));
