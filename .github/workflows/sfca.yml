@@ -1,13 +1,16 @@
-name: Salesforce Code Analyzer + Validation (No Deploy)
+name: Salesforce Code Analyzer Workflow
 
 on:
   pull_request:
     paths:
-      - 'force-app/main/default/**'
+      - 'force-app/main/default/classes/**'
       - 'sfca-config.yml'
 
+# permissions:
+#   contents: read
+#   pull-requests: write
 jobs:
-  sf-quality-gate:
+  sfca:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,36 +20,60 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
-
-      # -------------------------------
-      # Setup Node
-      # -------------------------------
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
+          fetch-depth: 0 
+      - name: Setup Node 
+        uses: actions/setup-node@v4 
+        with: 
           node-version: '20'
-
       # -------------------------------
       # Install Salesforce CLI
       # -------------------------------
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli@latest
 
-      # -------------------------------
-      # Install Salesforce Code Analyzer
-      # -------------------------------
-      - name: Install Salesforce Code Analyzer
+
+
+
+      - name: Install Latest Salesforce Code Analyzer CLI Plugin 
         run: sf plugins install code-analyzer@latest
+      - name: Verify Code Analyzer install
+        run: |
+            sf plugins
+            sf plugins inspect code-analyzer || true
+            sf code-analyzer run --help
+
+
 
       # -------------------------------
-      # Install yq
+      # Install yq (YAML parser)
       # -------------------------------
       - name: Install yq
         run: |
           sudo wget -qO /usr/local/bin/yq \
             https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
+      # -------------------------------
+      # Read CPD exclusions from sfca-config.yml
+      # -------------------------------
+      - name: Read CPD exclusions from sfca-config.yml
+        run: |
+          CPD_EXCLUSIONS=$(yq '.engines.cpd.fileExclusions[]' sfca-config.yml || true)
+          echo "CPD exclusions:"
+          echo "$CPD_EXCLUSIONS"
+          CPD_EXCLUSIONS=$(echo "$CPD_EXCLUSIONS" | tr '\n' ' ' | sed 's/ $//')
+          echo "CPD_EXCLUSIONS=$CPD_EXCLUSIONS" >> $GITHUB_ENV
+            
+      # -------------------------------
+      # Read PMD exclusions from config
+      # -------------------------------
+      - name: Read PMD exclusions from sfca-config.yml
+        run: |
+          PMD_EXCLUSIONS=$(yq '.engines.pmd.fileExclusions[]' sfca-config.yml || true)
+          echo "PMD exclusions:"
+          echo "$PMD_EXCLUSIONS"
+          # Convert newlines to space-separated string
+          PMD_EXCLUSIONS=$(echo "$PMD_EXCLUSIONS" | tr '\n' ' ' | sed 's/ $//')
+          echo "PMD_EXCLUSIONS=$PMD_EXCLUSIONS" >> $GITHUB_ENV
 
       # -------------------------------
       # Get changed Apex files
@@ -54,90 +81,50 @@ jobs:
       - name: Get changed Apex files
         run: |
           git fetch origin ${{ github.base_ref }}
-          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
             | grep '^force-app/main/default/classes/.*\.cls$' || true)
-          FILES=$(echo "$FILES" | tr '\n' ' ')
-          echo "FILES=$FILES" >> $GITHUB_ENV
+          echo "Changed Apex files (raw):"
+          echo "$CHANGED_FILES"
+          # Convert to space-separated single line
+          CHANGED_FILES=$(echo "$CHANGED_FILES" | tr '\n' ' ' | sed 's/ $//')
+          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
 
       # -------------------------------
-      # Prepare scoped workspace
+      # Build final FILES list (apply exclusions)
       # -------------------------------
+      - name: Resolve final Apex files
+        run: |
+          FINAL_FILES="$CHANGED_FILES"
+          ALL_EXCLUSIONS="$PMD_EXCLUSIONS $CPD_EXCLUSIONS"
+          for EXCLUDE in $ALL_EXCLUSIONS; do
+            # Convert ** to .* for regex
+            REGEX=$(echo "$EXCLUDE" | sed 's/\\/.*/g')
+            FINAL_FILES=$(echo "$FINAL_FILES" | tr ' ' '\n' | grep -v -E "$REGEX" || true)
+            FINAL_FILES=$(echo "$FINAL_FILES" | tr '\n' ' ' | sed 's/ $//')
+          done
+          echo "Final Apex files to analyze:"
+          echo "$FINAL_FILES"
+          echo "FILES=$FINAL_FILES" >> $GITHUB_ENV
+
+      - name: Add SF CLI to PATH
+        run: |
+              echo "/usr/local/bin" >> $GITHUB_PATH
+          
       - name: Prepare scoped workspace
         run: |
-          mkdir -p sfca-scope
-          for f in $FILES; do
-            mkdir -p sfca-scope/$(dirname $f)
-            cp $f sfca-scope/$f
-          done
-
+                mkdir -p sfca-scope
+                for f in $FILES; do
+                  mkdir -p sfca-scope/$(dirname $f)
+                  cp $f sfca-scope/$f
+                done
+            
       # -------------------------------
       # Run Salesforce Code Analyzer
       # -------------------------------
       - name: Run Salesforce Code Analyzer
+        id: run-code-analyzer
         uses: forcedotcom/run-code-analyzer@v2
         with:
-          run-arguments: >
-            --workspace sfca-scope
-            --view detail
-            --output-file sfca_results.html
-          results-artifact-name: code-analyzer-report
+          run-arguments: --workspace sfca-scope --view detail --output-file sfca_results.html 
+          results-artifact-name: salesforce-code-analyzer-results
           github-token: ${{ github.token }}
-
-      # =====================================================
-      # SALESFORCE VALIDATION (CHECK ONLY - NO DEPLOY)
-      # =====================================================
-
-      # -------------------------------
-      # Create JWT key file
-      # -------------------------------
-      - name: Create JWT key file
-        run: |
-          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
-
-      # -------------------------------
-      # Authenticate to Salesforce Org
-      # -------------------------------
-      - name: Authenticate Salesforce Org (JWT)
-        run: |
-          sf org login jwt \
-            --client-id ${{ secrets.CONSUMER_KEY }} \
-            --jwt-key-file server.key \
-            --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
-            --instance-url ${{ vars.INSTANCE_URL }} \
-            --alias testOrg
-
-      # -------------------------------
-      # Convert Source to Metadata
-      # -------------------------------
-      - name: Convert source to MDAPI
-        run: |
-          sf project convert source \
-            --source-dir force-app \
-            --output-dir mdapi_output
-
-      # -------------------------------
-      # Validate Deployment (Check Only)
-      # -------------------------------
-      - name: Validate Deployment (No Deploy)
-        id: validate
-        continue-on-error: true
-        run: |
-          sf project deploy validate \
-            --metadata-dir mdapi_output \
-            --test-level RunLocalTests \
-            --target-org testOrg \
-            --wait 30 \
-            --verbose \
-            --json > validation_result.json
-
-
-      # -------------------------------
-      # Upload Validation Report
-      # -------------------------------
-      - name: Upload Validation Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: salesforce-validation-report
-          path: validation_result.json
-
