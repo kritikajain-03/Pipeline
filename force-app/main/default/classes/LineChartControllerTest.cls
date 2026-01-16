@@ -38,8 +38,7 @@ public class LineChartControllerTest {
         Test.stopTest();
 
         Assert.isTrue(!result.isEmpty(), 'Result should not be empty');
-        assert.isFalse(!result.isEmpty());niefnvfoinv
         Assert.areEqual(12, result.get(Date.today().addDays(-3)),
             'Expected aggregated count 5 + 7 = 12');
-    }
+    }unceuicnuefhedncodnc
 }
