@@ -31,7 +31,7 @@ public class LineChartControllerTest {
 
     @isTest
     static void testValidId() {
-        Security_Insight__c si = createSI();
+        Security_Insight__cc si = createSI();
 
         Test.startTest();
         Map<Date, Integer> result = LineChartController.getAuditData(si.Id);
