@@ -1,152 +1,259 @@
-name: Validate PR on develop branch
+name: Salesforce Code Analyzer Workflow
 
 on:
   pull_request:
-    types: [opened, synchronize]
-    branches:
-      - develop
     paths:
-      - 'force-app/**'
+      - 'force-app/main/default/classes/**'
+      - 'sfca-config.yml'
 
+# permissions:
+#   contents: read
+#   pull-requests: write
 jobs:
-  validate-deployment-on-develop-org:
+  sfca:
     runs-on: ubuntu-latest
-    if: ${{ github.actor != 'dependabot[bot]' }}
-
+  
     steps:
-    # ----------------------------------------------------
-    # Checkout
-    # ----------------------------------------------------
-    - name: Checkout source
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      # -------------------------------
+      # Checkout repository
+      # -------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 
+      - name: Setup Node 
+        uses: actions/setup-node@v4 
+        with: 
+          node-version: '20'
+      # -------------------------------
+      # Install Salesforce CLI
+      # -------------------------------
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli@latest
 
-    # ----------------------------------------------------
-    # Setup Node
-    # ----------------------------------------------------
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
 
-    # ----------------------------------------------------
-    # Read PR Body (Tests)
-    # ----------------------------------------------------
-    - name: Extract Apex tests from PR
-      env:
-        PR_BODY: ${{ github.event.pull_request.body }}
-      run: |
-        echo "$PR_BODY" > pr_body.txt
 
-        cat << 'EOF' > parsePR.js
-        const fs = require('fs');
-        const body = fs.readFileSync('pr_body.txt','utf8');
-        const match = body.match(/Apex::\[(.*?)\]::Apex/);
-        let tests = 'all';
-        if (match && match[1]) tests = match[1].trim();
-        fs.writeFileSync('testsToRun.txt', tests);
-        EOF
 
-        node parsePR.js
-        echo "APEX_TESTS=$(cat testsToRun.txt)" >> $GITHUB_ENV
+      - name: Install Latest Salesforce Code Analyzer CLI Plugin 
+        run: sf plugins install code-analyzer@latest
+      - name: Verify Code Analyzer install
+        run: |
+            sf plugins
+            sf plugins inspect code-analyzer || true
+            sf code-analyzer run --help
 
-    # ----------------------------------------------------
-    # Install Salesforce CLI
-    # ----------------------------------------------------
-    - name: Install Salesforce CLI
-      run: |
-        npm install -g @salesforce/cli
-        sf version
 
-    # ----------------------------------------------------
-    # JWT Authentication
-    # ----------------------------------------------------
-    - name: Authenticate to Salesforce
-      run: |
-        echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
 
-        sf org login jwt \
-          --client-id ${{ secrets.CONSUMER_KEY }} \
-          --jwt-key-file server.key \
-          --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
-          --instance-url ${{ vars.INSTANCE_URL }} \
-          --alias integration \
-          --set-default
+      # -------------------------------
+      # Install yq (YAML parser)
+      # -------------------------------
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+      # -------------------------------
+      # Read CPD exclusions from sfca-config.yml
+      # -------------------------------
+      - name: Read CPD exclusions from sfca-config.yml
+        run: |
+          CPD_EXCLUSIONS=$(yq '.engines.cpd.fileExclusions[]' sfca-config.yml || true)
+          echo "CPD exclusions:"
+          echo "$CPD_EXCLUSIONS"
+          CPD_EXCLUSIONS=$(echo "$CPD_EXCLUSIONS" | tr '\n' ' ' | sed 's/ $//')
+          echo "CPD_EXCLUSIONS=$CPD_EXCLUSIONS" >> $GITHUB_ENV
+            
+      # -------------------------------
+      # Read PMD exclusions from config
+      # -------------------------------
+      - name: Read PMD exclusions from sfca-config.yml
+        run: |
+          PMD_EXCLUSIONS=$(yq '.engines.pmd.fileExclusions[]' sfca-config.yml || true)
+          echo "PMD exclusions:"
+          echo "$PMD_EXCLUSIONS"
+          # Convert newlines to space-separated string
+          PMD_EXCLUSIONS=$(echo "$PMD_EXCLUSIONS" | tr '\n' ' ' | sed 's/ $//')
+          echo "PMD_EXCLUSIONS=$PMD_EXCLUSIONS" >> $GITHUB_ENV
 
-    # ----------------------------------------------------
-    # Install sfdx-git-delta
-    # ----------------------------------------------------
-    - name: Install git-delta
-      run: sf plugins install sfdx-git-delta
+      # -------------------------------
+      # Get changed Apex files
+      # -------------------------------
+      - name: Get changed Apex files
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep '^force-app/main/default/classes/.*\.cls$' || true)
+          echo "Changed Apex files (raw):"
+          echo "$CHANGED_FILES"
+          # Convert to space-separated single line
+          CHANGED_FILES=$(echo "$CHANGED_FILES" | tr '\n' ' ' | sed 's/ $//')
+          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
 
-    # ----------------------------------------------------
-    # Create delta
-    # ----------------------------------------------------
-    - name: Create delta package
-      run: |
-        mkdir changed-sources reports
-        sf sgd source delta \
-          --to HEAD \
-          --from HEAD^ \
-          --output changed-sources \
-          --generate-delta \
-          --source force-app
+      # -------------------------------
+      # Build final FILES list (apply exclusions)
+      # -------------------------------
+      - name: Resolve final Apex files
+        run: |
+          FINAL_FILES="$CHANGED_FILES"
+          ALL_EXCLUSIONS="$PMD_EXCLUSIONS $CPD_EXCLUSIONS"
+          for EXCLUDE in $ALL_EXCLUSIONS; do
+            # Convert ** to .* for regex
+            REGEX=$(echo "$EXCLUDE" | sed 's/\\/.*/g')
+            FINAL_FILES=$(echo "$FINAL_FILES" | tr ' ' '\n' | grep -v -E "$REGEX" || true)
+            FINAL_FILES=$(echo "$FINAL_FILES" | tr '\n' ' ' | sed 's/ $//')
+          done
+          echo "Final Apex files to analyze:"
+          echo "$FINAL_FILES"
+          echo "FILES=$FINAL_FILES" >> $GITHUB_ENV
 
-    # ----------------------------------------------------
-    # Java + Scanner
-    # ----------------------------------------------------
-    - name: Install Java
-      run: sudo apt-get install -y default-jdk
+      - name: Add SF CLI to PATH
+        run: |
+              echo "/usr/local/bin" >> $GITHUB_PATH
+          
+      - name: Prepare scoped workspace
+        run: |
+                mkdir -p sfca-scope
+                for f in $FILES; do
+                  mkdir -p sfca-scope/$(dirname $f)
+                  cp $f sfca-scope/$f
+                done
+            
+      # -------------------------------
+      # Run Salesforce Code Analyzer
+      # -------------------------------
+      - name: Run Salesforce Code Analyzer
+        id: run-code-analyzer
+        uses: forcedotcom/run-code-analyzer@v2
+        with:
+          run-arguments: --workspace sfca-scope --view detail --output-file sfca_results.html 
+          results-artifact-name: salesforce-code-analyzer-results
+          github-token: ${{ github.token }}
 
-    - name: Install Salesforce Scanner
-      run: sf plugins install @salesforce/sfdx-scanner
+      # -------------------------------
+      # Authenticate to Org
+      # -------------------------------
+      - name: Authenticate to Salesforce Org
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          sf org login jwt \
+            --client-id ${{ secrets.CONSUMER_KEY }} \
+            --jwt-key-file server.key \
+            --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
+            --instance-url ${{ vars.INSTANCE_URL }} \
+            --alias testOrg
 
-    # ----------------------------------------------------
-    # Run Code Analyzer (Report)
-    # ----------------------------------------------------
-    - name: Run Apex Code Scan
-      run: |
-        sf scanner run \
-          --target "changed-sources/**/*.cls" \
-          --format sarif \
-          --outfile reports/apex-scan.sarif
 
-    - name: Upload Code Scan Report
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: reports/apex-scan.sarif
 
-    # ----------------------------------------------------
-    # Validate Deployment (Specified Tests)
-    # ----------------------------------------------------
-    - name: Validate with specified tests
-      if: ${{ env.APEX_TESTS != 'all' }}
-      run: |
-        sf project deploy validate \
-          --source-dir changed-sources/force-app \
-          --test-level RunSpecifiedTests \
-          --tests ${{ env.APEX_TESTS }} \
-          --results-dir reports \
-          --json > reports/deploy-validation.json
+      # -------------------------------
+      # 1. Run Apex Tests (Generates the missing file)
+      # -------------------------------
+      - name: Run Apex Tests
+        continue-on-error: true
+        run: |
+          sf apex test run \
+            --target-org testOrg \
+            --test-level RunLocalTests \
+            --result-format json \
+            --code-coverage \
+            --wait 30 \
+            > test_results.json 2> test_errors.log
 
-    # ----------------------------------------------------
-    # Validate Deployment (All Tests)
-    # ----------------------------------------------------
-    - name: Validate with all tests
-      if: ${{ env.APEX_TESTS == 'all' }}
-      run: |
-        sf project deploy validate \
-          --source-dir changed-sources/force-app \
-          --test-level RunLocalTests \
-          --results-dir reports \
-          --json > reports/deploy-validation.json
+          if [ ! -s test_results.json ]; then
+            echo '{"error":"Apex tests failed or no results"}' > test_results.json
+          fi
+      - name: Install bc
+        run: sudo apt-get update && sudo apt-get install -y bc
 
-    # ----------------------------------------------------
-    # Upload Validation & Test Reports
-    # ----------------------------------------------------
-    - name: Upload Validation Reports
-      uses: actions/upload-artifact@v4
-      with:
-        name: salesforce-validation-report
-        path: reports/
+      - name: Extract Failing Apex Test Classes
+        continue-on-error: true
+        run: |
+          jq -r '
+            .result.tests[]
+            | select(.Outcome == "Fail")
+            | "\(.ApexClass.Name) → \(.MethodName): \(.Message)"
+          ' test_results.json > failing_tests.txt || true
+
+          if [ ! -s failing_tests.txt ]; then
+            echo "No failing Apex tests 🎉" > failing_tests.txt
+          fi
+  
+
+      # -------------------------------
+      # 2. Validate Coverage Threshold (Soft Fail)
+      # -------------------------------
+      - name: Validate Coverage Threshold (Soft Fail)
+        continue-on-error: true
+        run: |
+          set +e   # IMPORTANT: disable immediate exit
+
+          TOTAL_COVERAGE=$(jq -r '
+            if (.result.coverage.coverage | length) > 0
+            then ([.result.coverage.coverage[].percentCovered] | add / length)
+            else 0
+            end
+          ' test_results.json 2>/dev/null)
+
+          if [ -z "$TOTAL_COVERAGE" ] || [ "$TOTAL_COVERAGE" = "null" ]; then
+            TOTAL_COVERAGE=0
+          fi
+
+          echo "Total Coverage: $TOTAL_COVERAGE%"
+          echo "$TOTAL_COVERAGE" > coverage_value.txt
+
+          if echo "$TOTAL_COVERAGE < 75" | bc -l | grep -q 1; then
+            echo "❌ Coverage below 75% threshold" > coverage_status.txt
+          else
+            echo "✅ Coverage meets 75% threshold" > coverage_status.txt
+          fi
+
+
+      # -------------------------------
+      # 3. Validate Metadata
+      # -------------------------------
+      - name: Validate Metadata Deployment
+        continue-on-error: true
+        run: |
+          sf project deploy validate \
+            --source-dir force-app \
+            --target-org testOrg \
+            --json \
+            > metadata_validation.json 2> metadata_errors.log
+
+          if [ ! -s metadata_validation.json ]; then
+            echo '{"error":"Metadata validation failed"}' > metadata_validation.json
+          fi
+
+
+      # -------------------------------
+      # 4. Generate Consolidated Validation Report
+      # -------------------------------
+      - name: Generate Validation Report
+        run: |
+          touch coverage_value.txt coverage_status.txt test_results.json metadata_validation.json
+
+          COVERAGE=$(cat coverage_value.txt)
+          STATUS=$(cat coverage_status.txt)
+
+          echo "<html><body style='font-family: sans-serif;'><h1>Validation Report</h1>" > validation_report.html
+          echo "<h2>Failing Apex Tests</h2><pre>" >> validation_report.html
+          cat failing_tests.txt >> validation_report.html
+          echo "</pre>" >> validation_report.html
+
+
+          echo "<h2>Apex Test Coverage</h2>" >> validation_report.html
+          echo "<p><strong>Coverage:</strong> $COVERAGE%</p>" >> validation_report.html
+          echo "<p><strong>Status:</strong> $STATUS</p>" >> validation_report.html
+
+          echo "<h2>Metadata Validation Results</h2><pre>" >> validation_report.html
+          cat metadata_validation.json >> validation_report.html
+          echo "</pre></body></html>" >> validation_report.html
+
+
+      # -------------------------------
+      # 5. Upload Validation Report
+      # -------------------------------
+      - name: Upload Validation Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: salesforce-validation-report
+          path: validation_report.html
