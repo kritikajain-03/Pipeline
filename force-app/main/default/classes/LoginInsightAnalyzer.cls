@@ -45,6 +45,7 @@ public class LoginInsightAnalyzer implements ISecurityAnalyzer{
 
     //chaining batch   
     public void finish(Map<String, Boolean> batchMap) {
+        System.debug('LoginInsightAnalyzer finish');
         String nextbatch='ConnectedAppAnalyzer';
         database.executeBatch(new SecurityAnalyzerBatch(nextbatch,batchMap,3),2);
     }
