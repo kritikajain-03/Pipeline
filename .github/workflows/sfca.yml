@@ -3,11 +3,11 @@ name: Salesforce Code Analyzer + Validation (No Deploy)
 on:
   pull_request:
     paths:
-      - 'force-app/main/default/classes/**'
+      - 'force-app/main/default/**'
       - 'sfca-config.yml'
 
 jobs:
-  sfca:
+  sf-quality-gate:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,11 +17,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0 
+          fetch-depth: 0
 
-      - name: Setup Node 
-        uses: actions/setup-node@v4 
-        with: 
+      # -------------------------------
+      # Setup Node
+      # -------------------------------
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
           node-version: '20'
 
       # -------------------------------
@@ -30,17 +33,14 @@ jobs:
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli@latest
 
-      - name: Install Latest Salesforce Code Analyzer CLI Plugin 
+      # -------------------------------
+      # Install Salesforce Code Analyzer
+      # -------------------------------
+      - name: Install Salesforce Code Analyzer
         run: sf plugins install code-analyzer@latest
 
-      - name: Verify Code Analyzer install
-        run: |
-          sf plugins
-          sf plugins inspect code-analyzer || true
-          sf code-analyzer run --help
-
       # -------------------------------
-      # Install yq (YAML parser)
+      # Install yq
       # -------------------------------
       - name: Install yq
         run: |
@@ -49,48 +49,19 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
 
       # -------------------------------
-      # Read CPD exclusions
-      # -------------------------------
-      - name: Read CPD exclusions from sfca-config.yml
-        run: |
-          CPD_EXCLUSIONS=$(yq '.engines.cpd.fileExclusions[]' sfca-config.yml || true)
-          CPD_EXCLUSIONS=$(echo "$CPD_EXCLUSIONS" | tr '\n' ' ')
-          echo "CPD_EXCLUSIONS=$CPD_EXCLUSIONS" >> $GITHUB_ENV
-
-      # -------------------------------
-      # Read PMD exclusions
-      # -------------------------------
-      - name: Read PMD exclusions from sfca-config.yml
-        run: |
-          PMD_EXCLUSIONS=$(yq '.engines.pmd.fileExclusions[]' sfca-config.yml || true)
-          PMD_EXCLUSIONS=$(echo "$PMD_EXCLUSIONS" | tr '\n' ' ')
-          echo "PMD_EXCLUSIONS=$PMD_EXCLUSIONS" >> $GITHUB_ENV
-
-      # -------------------------------
       # Get changed Apex files
       # -------------------------------
       - name: Get changed Apex files
         run: |
           git fetch origin ${{ github.base_ref }}
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
             | grep '^force-app/main/default/classes/.*\.cls$' || true)
-          CHANGED_FILES=$(echo "$CHANGED_FILES" | tr '\n' ' ')
-          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
+          FILES=$(echo "$FILES" | tr '\n' ' ')
+          echo "FILES=$FILES" >> $GITHUB_ENV
 
       # -------------------------------
-      # Apply exclusions
+      # Prepare scoped workspace
       # -------------------------------
-      - name: Resolve final Apex files
-        run: |
-          FINAL_FILES="$CHANGED_FILES"
-          ALL_EXCLUSIONS="$PMD_EXCLUSIONS $CPD_EXCLUSIONS"
-          for EXCLUDE in $ALL_EXCLUSIONS; do
-            REGEX=$(echo "$EXCLUDE" | sed 's/\*\*/.*/g')
-            FINAL_FILES=$(echo "$FINAL_FILES" | tr ' ' '\n' | grep -v -E "$REGEX" || true)
-            FINAL_FILES=$(echo "$FINAL_FILES" | tr '\n' ' ')
-          done
-          echo "FILES=$FINAL_FILES" >> $GITHUB_ENV
-
       - name: Prepare scoped workspace
         run: |
           mkdir -p sfca-scope
@@ -103,15 +74,17 @@ jobs:
       # Run Salesforce Code Analyzer
       # -------------------------------
       - name: Run Salesforce Code Analyzer
-        id: run-code-analyzer
         uses: forcedotcom/run-code-analyzer@v2
         with:
-          run-arguments: --workspace sfca-scope --view detail --output-file sfca_results.html
-          results-artifact-name: salesforce-code-analyzer-results
+          run-arguments: >
+            --workspace sfca-scope
+            --view detail
+            --output-file sfca_results.html
+          results-artifact-name: code-analyzer-report
           github-token: ${{ github.token }}
 
       # =====================================================
-      # 🔽 SALESFORCE VALIDATION PART STARTS HERE 🔽
+      # SALESFORCE VALIDATION (CHECK ONLY - NO DEPLOY)
       # =====================================================
 
       # -------------------------------
@@ -122,7 +95,7 @@ jobs:
           echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
 
       # -------------------------------
-      # Authenticate Salesforce Org (JWT)
+      # Authenticate to Salesforce Org
       # -------------------------------
       - name: Authenticate Salesforce Org (JWT)
         run: |
@@ -131,10 +104,10 @@ jobs:
             --jwt-key-file server.key \
             --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
             --instance-url ${{ vars.INSTANCE_URL }} \
-            --alias ValidationOrg
+            --alias testOrg
 
       # -------------------------------
-      # Convert Source → Metadata
+      # Convert Source to Metadata
       # -------------------------------
       - name: Convert source to MDAPI
         run: |
@@ -143,18 +116,20 @@ jobs:
             --output-dir mdapi_output
 
       # -------------------------------
-      # Validate Deployment (NO DEPLOY)
+      # Validate Deployment (Check Only)
       # -------------------------------
-      - name: Validate Deployment (Check Only)
+      - name: Validate Deployment (No Deploy)
         id: validate
         continue-on-error: true
         run: |
           sf project deploy validate \
             --metadata-dir mdapi_output \
             --test-level RunLocalTests \
+            --target-org testOrg \
             --wait 30 \
             --verbose \
             --json > validation_result.json
+
 
       # -------------------------------
       # Upload Validation Report
@@ -165,3 +140,4 @@ jobs:
         with:
           name: salesforce-validation-report
           path: validation_result.json
+
