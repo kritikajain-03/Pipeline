@@ -39,7 +39,7 @@ private class LoginInsightAnalyzerTest {
         Test.startTest();
         analyzer.evaluate(false, users);
         Test.stopTest();
-        Assert.isTrue(true, 'Non-AI evaluation executed successfully');
+       
     }
 
 }
