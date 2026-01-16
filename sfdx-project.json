@@ -5,8 +5,10 @@
       "default": true
     }
   ],
-  "name": "pipeline",
+  "name": "salesforce-validation-only",
   "namespace": "",
   "sfdcLoginUrl": "https://login.salesforce.com",
   "sourceApiVersion": "65.0"
 }
+
+

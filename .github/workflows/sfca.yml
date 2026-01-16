@@ -1,69 +1,136 @@
-name: Salesforce Validation Pipeline
+name: Salesforce Code Analyzer + Validation (No Deploy)
 
 on:
   pull_request:
     paths:
-      - 'force-app/**'
+      - 'force-app/main/default/**'
+      - 'sfca-config.yml'
 
 jobs:
-  validate-and-analyze:
+  sf-quality-gate:
     runs-on: ubuntu-latest
+
     steps:
-      # 1. Setup Environment
+      # -------------------------------
+      # Checkout repository
+      # -------------------------------
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0 
+          fetch-depth: 0
 
-      - name: Setup Node 
-        uses: actions/setup-node@v4 
-        with: 
+      # -------------------------------
+      # Setup Node
+      # -------------------------------
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
           node-version: '20'
 
+      # -------------------------------
+      # Install Salesforce CLI
+      # -------------------------------
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli@latest
 
-      # 2. Static Code Analysis
-      - name: Install Code Analyzer
+      # -------------------------------
+      # Install Salesforce Code Analyzer
+      # -------------------------------
+      - name: Install Salesforce Code Analyzer
         run: sf plugins install code-analyzer@latest
 
-      - name: Run Code Analyzer
-        id: run-code-analyzer
+      # -------------------------------
+      # Install yq
+      # -------------------------------
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      # -------------------------------
+      # Get changed Apex files
+      # -------------------------------
+      - name: Get changed Apex files
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep '^force-app/main/default/classes/.*\.cls$' || true)
+          FILES=$(echo "$FILES" | tr '\n' ' ')
+          echo "FILES=$FILES" >> $GITHUB_ENV
+
+      # -------------------------------
+      # Prepare scoped workspace
+      # -------------------------------
+      - name: Prepare scoped workspace
+        run: |
+          mkdir -p sfca-scope
+          for f in $FILES; do
+            mkdir -p sfca-scope/$(dirname $f)
+            cp $f sfca-scope/$f
+          done
+
+      # -------------------------------
+      # Run Salesforce Code Analyzer
+      # -------------------------------
+      - name: Run Salesforce Code Analyzer
         uses: forcedotcom/run-code-analyzer@v2
         with:
-          # Use 'force-app' as the target to scan everything in your project
-          run-arguments: --sourcepath force-app --output-file sfca_results.html 
-          results-artifact-name: code-analysis-report
-        continue-on-error: true # This prevents the pipeline from stopping if the scanner finds violations
+          run-arguments: >
+            --workspace sfca-scope
+            --view detail
+            --output-file sfca_results.html
+          results-artifact-name: code-analyzer-report
+          github-token: ${{ github.token }}
 
-      # 3. Authenticate to Salesforce Org
-      - name: 'Authenticate Salesforce Org'
+      # =====================================================
+      # SALESFORCE VALIDATION (CHECK ONLY - NO DEPLOY)
+      # =====================================================
+
+      # -------------------------------
+      # Create JWT key file
+      # -------------------------------
+      - name: Create JWT key file
         run: |
           echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+
+      # -------------------------------
+      # Authenticate to Salesforce Org
+      # -------------------------------
+      - name: Authenticate Salesforce Org (JWT)
+        run: |
           sf org login jwt \
             --client-id ${{ secrets.CONSUMER_KEY }} \
             --jwt-key-file server.key \
             --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
             --instance-url ${{ vars.INSTANCE_URL }} \
-            --set-default
+            --alias ValidationOrg
 
-      # 4. Dry-Run Validation (The "Artificial" Run)
-      # This validates code, runs tests, but DOES NOT deploy.
-      - name: 'Validate Deployment (Check Only)'
-        id: validate_code
+      # -------------------------------
+      # Convert Source to Metadata
+      # -------------------------------
+      - name: Convert source to MDAPI
+        run: |
+          sf project convert source \
+            --source-dir force-app \
+            --output-dir mdapi_output
+
+      # -------------------------------
+      # Validate Deployment (Check Only)
+      # -------------------------------
+      - name: Validate Deployment (No Deploy)
         run: |
           sf project deploy validate \
-            --source-dir force-app \
+            --metadata-dir mdapi_output \
             --test-level RunLocalTests \
             --wait 30 \
-            --detailed-description > validation_report.txt
+            --json > validation_result.json
 
-      # 5. Archive Reports
-      - name: Upload Validation and Analysis Reports
-        if: always()
+      # -------------------------------
+      # Upload Validation Report
+      # -------------------------------
+      - name: Upload Validation Report
         uses: actions/upload-artifact@v4
         with:
-          name: full-pipeline-reports
-          path: |
-            sfca_results.html
-            validation_report.txt
+          name: salesforce-validation-report
+          path: validation_result.json
