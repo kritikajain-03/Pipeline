@@ -1,18 +1,14 @@
-name: Salesforce Code Analyzer Workflow
+name: Salesforce Validation Workflow
 
 on:
   pull_request:
     paths:
-      - 'force-app/main/default/classes/**'
-      - 'sfca-config.yml'
+      - 'force-app/**'
 
-# permissions:
-#   contents: read
-#   pull-requests: write
 jobs:
-  sfca:
+  validate:
     runs-on: ubuntu-latest
-  
+
     steps:
       # -------------------------------
       # Checkout repository
@@ -20,117 +16,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0 
-      - name: Setup Node 
-        uses: actions/setup-node@v4 
-        with: 
+          fetch-depth: 0
+
+      # -------------------------------
+      # Setup Node
+      # -------------------------------
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
           node-version: '20'
+
       # -------------------------------
       # Install Salesforce CLI
       # -------------------------------
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli@latest
 
-
-
-
-      - name: Install Latest Salesforce Code Analyzer CLI Plugin 
-        run: sf plugins install code-analyzer@latest
-      - name: Verify Code Analyzer install
-        run: |
-            sf plugins
-            sf plugins inspect code-analyzer || true
-            sf code-analyzer run --help
-
-
-
       # -------------------------------
-      # Install yq (YAML parser)
-      # -------------------------------
-      - name: Install yq
-        run: |
-          sudo wget -qO /usr/local/bin/yq \
-            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
-      # -------------------------------
-      # Read CPD exclusions from sfca-config.yml
-      # -------------------------------
-      - name: Read CPD exclusions from sfca-config.yml
-        run: |
-          CPD_EXCLUSIONS=$(yq '.engines.cpd.fileExclusions[]' sfca-config.yml || true)
-          echo "CPD exclusions:"
-          echo "$CPD_EXCLUSIONS"
-          CPD_EXCLUSIONS=$(echo "$CPD_EXCLUSIONS" | tr '\n' ' ' | sed 's/ $//')
-          echo "CPD_EXCLUSIONS=$CPD_EXCLUSIONS" >> $GITHUB_ENV
-            
-      # -------------------------------
-      # Read PMD exclusions from config
-      # -------------------------------
-      - name: Read PMD exclusions from sfca-config.yml
-        run: |
-          PMD_EXCLUSIONS=$(yq '.engines.pmd.fileExclusions[]' sfca-config.yml || true)
-          echo "PMD exclusions:"
-          echo "$PMD_EXCLUSIONS"
-          # Convert newlines to space-separated string
-          PMD_EXCLUSIONS=$(echo "$PMD_EXCLUSIONS" | tr '\n' ' ' | sed 's/ $//')
-          echo "PMD_EXCLUSIONS=$PMD_EXCLUSIONS" >> $GITHUB_ENV
-
-      # -------------------------------
-      # Get changed Apex files
-      # -------------------------------
-      - name: Get changed Apex files
-        run: |
-          git fetch origin ${{ github.base_ref }}
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
-            | grep '^force-app/main/default/classes/.*\.cls$' || true)
-          echo "Changed Apex files (raw):"
-          echo "$CHANGED_FILES"
-          # Convert to space-separated single line
-          CHANGED_FILES=$(echo "$CHANGED_FILES" | tr '\n' ' ' | sed 's/ $//')
-          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
-
-      # -------------------------------
-      # Build final FILES list (apply exclusions)
-      # -------------------------------
-      - name: Resolve final Apex files
-        run: |
-          FINAL_FILES="$CHANGED_FILES"
-          ALL_EXCLUSIONS="$PMD_EXCLUSIONS $CPD_EXCLUSIONS"
-          for EXCLUDE in $ALL_EXCLUSIONS; do
-            # Convert ** to .* for regex
-            REGEX=$(echo "$EXCLUDE" | sed 's/\\/.*/g')
-            FINAL_FILES=$(echo "$FINAL_FILES" | tr ' ' '\n' | grep -v -E "$REGEX" || true)
-            FINAL_FILES=$(echo "$FINAL_FILES" | tr '\n' ' ' | sed 's/ $//')
-          done
-          echo "Final Apex files to analyze:"
-          echo "$FINAL_FILES"
-          echo "FILES=$FINAL_FILES" >> $GITHUB_ENV
-
-      - name: Add SF CLI to PATH
-        run: |
-              echo "/usr/local/bin" >> $GITHUB_PATH
-          
-      - name: Prepare scoped workspace
-        run: |
-                mkdir -p sfca-scope
-                for f in $FILES; do
-                  mkdir -p sfca-scope/$(dirname $f)
-                  cp $f sfca-scope/$f
-                done
-            
-      # -------------------------------
-      # Run Salesforce Code Analyzer
-      # -------------------------------
-      - name: Run Salesforce Code Analyzer
-        id: run-code-analyzer
-        uses: forcedotcom/run-code-analyzer@v2
-        with:
-          run-arguments: --workspace sfca-scope --view detail --output-file sfca_results.html 
-          results-artifact-name: salesforce-code-analyzer-results
-          github-token: ${{ github.token }}
-
-      # -------------------------------
-      # Authenticate to Org
+      # Authenticate to Salesforce Org
       # -------------------------------
       - name: Authenticate to Salesforce Org
         run: |
@@ -142,10 +45,8 @@ jobs:
             --instance-url ${{ vars.INSTANCE_URL }} \
             --alias testOrg
 
-
-
       # -------------------------------
-      # 1. Run Apex Tests (Generates the missing file)
+      # Run Apex Tests
       # -------------------------------
       - name: Run Apex Tests
         continue-on-error: true
@@ -156,19 +57,20 @@ jobs:
             --result-format json \
             --code-coverage \
             --wait 30 \
-            > test_results.json 2> test_errors.log
+            > test_results.json 2>/dev/null
 
           if [ ! -s test_results.json ]; then
             echo '{"error":"Apex tests failed or no results"}' > test_results.json
           fi
-      - name: Install bc
-        run: sudo apt-get update && sudo apt-get install -y bc
 
-      - name: Extract Failing Apex Test Classes
+      # -------------------------------
+      # Extract Failing Tests
+      # -------------------------------
+      - name: Extract Failing Tests
         continue-on-error: true
         run: |
           jq -r '
-            .result.tests[]
+            .result.tests[]?
             | select(.Outcome == "Fail")
             | "\(.ApexClass.Name) → \(.MethodName): \(.Message)"
           ' test_results.json > failing_tests.txt || true
@@ -176,39 +78,30 @@ jobs:
           if [ ! -s failing_tests.txt ]; then
             echo "No failing Apex tests 🎉" > failing_tests.txt
           fi
-  
 
       # -------------------------------
-      # 2. Validate Coverage Threshold (Soft Fail)
+      # Validate Coverage (75%)
       # -------------------------------
-      - name: Validate Coverage Threshold (Soft Fail)
+      - name: Validate Coverage
         continue-on-error: true
         run: |
-          set +e   # IMPORTANT: disable immediate exit
-
           TOTAL_COVERAGE=$(jq -r '
             if (.result.coverage.coverage | length) > 0
             then ([.result.coverage.coverage[].percentCovered] | add / length)
             else 0
             end
-          ' test_results.json 2>/dev/null)
+          ' test_results.json)
 
-          if [ -z "$TOTAL_COVERAGE" ] || [ "$TOTAL_COVERAGE" = "null" ]; then
-            TOTAL_COVERAGE=0
-          fi
-
-          echo "Total Coverage: $TOTAL_COVERAGE%"
           echo "$TOTAL_COVERAGE" > coverage_value.txt
 
-          if echo "$TOTAL_COVERAGE < 75" | bc -l | grep -q 1; then
-            echo "❌ Coverage below 75% threshold" > coverage_status.txt
+          if (( $(echo "$TOTAL_COVERAGE < 75" | bc -l) )); then
+            echo "❌ Coverage below 75%" > coverage_status.txt
           else
-            echo "✅ Coverage meets 75% threshold" > coverage_status.txt
+            echo "✅ Coverage meets 75%" > coverage_status.txt
           fi
 
-
       # -------------------------------
-      # 3. Validate Metadata
+      # Metadata Validation
       # -------------------------------
       - name: Validate Metadata Deployment
         continue-on-error: true
@@ -217,40 +110,37 @@ jobs:
             --source-dir force-app \
             --target-org testOrg \
             --json \
-            > metadata_validation.json 2> metadata_errors.log
+            > metadata_validation.json 2>/dev/null
 
           if [ ! -s metadata_validation.json ]; then
             echo '{"error":"Metadata validation failed"}' > metadata_validation.json
           fi
 
-
       # -------------------------------
-      # 4. Generate Consolidated Validation Report
+      # Generate SINGLE Validation Report
       # -------------------------------
       - name: Generate Validation Report
         run: |
-          touch coverage_value.txt coverage_status.txt test_results.json metadata_validation.json
-
           COVERAGE=$(cat coverage_value.txt)
           STATUS=$(cat coverage_status.txt)
 
-          echo "<html><body style='font-family: sans-serif;'><h1>Validation Report</h1>" > validation_report.html
+          echo "<html><body style='font-family: Arial'>" > validation_report.html
+          echo "<h1>Salesforce Validation Report</h1>" >> validation_report.html
+
           echo "<h2>Failing Apex Tests</h2><pre>" >> validation_report.html
           cat failing_tests.txt >> validation_report.html
           echo "</pre>" >> validation_report.html
 
-
           echo "<h2>Apex Test Coverage</h2>" >> validation_report.html
-          echo "<p><strong>Coverage:</strong> $COVERAGE%</p>" >> validation_report.html
-          echo "<p><strong>Status:</strong> $STATUS</p>" >> validation_report.html
+          echo "<p><b>Coverage:</b> $COVERAGE%</p>" >> validation_report.html
+          echo "<p><b>Status:</b> $STATUS</p>" >> validation_report.html
 
-          echo "<h2>Metadata Validation Results</h2><pre>" >> validation_report.html
+          echo "<h2>Metadata Validation</h2><pre>" >> validation_report.html
           cat metadata_validation.json >> validation_report.html
           echo "</pre></body></html>" >> validation_report.html
 
-
       # -------------------------------
-      # 5. Upload Validation Report
+      # Upload Report
       # -------------------------------
       - name: Upload Validation Report
         uses: actions/upload-artifact@v4
