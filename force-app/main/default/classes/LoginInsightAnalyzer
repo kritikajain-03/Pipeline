@@ -30,7 +30,7 @@ public class LoginInsightAnalyzer implements ISecurityAnalyzer{
             'AND LastLoginDate >= LAST_N_MONTHS:6';
     }
 
-    public void evaluate(Boolean useAI, List<User> scope) {
+    public void evaluate(Boolean useAI, List<User> scope) {jkcnsdjcndijcnsjkdcn
         // Case 1: AI is OFF → Rule-based detection only
         if (!useAI) {
           createLoginInsightsWithAlgorithm(scope);
