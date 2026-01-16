@@ -150,16 +150,33 @@ jobs:
       - name: Run Apex Tests
         continue-on-error: true
         run: |
-          # Run tests and capture both stdout and stderr
-          sf apex test run --target-org testOrg --result-format json --code-coverage --wait 30 \
+          sf apex test run \
+            --target-org testOrg \
+            --test-level RunLocalTests \
+            --result-format json \
+            --code-coverage \
+            --wait 30 \
             > test_results.json 2> test_errors.log
 
-          # If test_results.json is empty, write an error marker
           if [ ! -s test_results.json ]; then
             echo '{"error":"Apex tests failed or no results"}' > test_results.json
           fi
       - name: Install bc
         run: sudo apt-get update && sudo apt-get install -y bc
+
+      - name: Extract Failing Apex Test Classes
+        continue-on-error: true
+        run: |
+          jq -r '
+            .result.tests[]
+            | select(.Outcome == "Fail")
+            | "\(.ApexClass.Name) → \(.MethodName): \(.Message)"
+          ' test_results.json > failing_tests.txt || true
+
+          if [ ! -s failing_tests.txt ]; then
+            echo "No failing Apex tests 🎉" > failing_tests.txt
+          fi
+  
 
       # -------------------------------
       # 2. Validate Coverage Threshold (Soft Fail)
@@ -196,11 +213,16 @@ jobs:
       - name: Validate Metadata Deployment
         continue-on-error: true
         run: |
-          sf project deploy validate --target-org testOrg --json > metadata_validation.json 2> metadata_errors.log
+          sf project deploy validate \
+            --source-dir force-app \
+            --target-org testOrg \
+            --json \
+            > metadata_validation.json 2> metadata_errors.log
 
           if [ ! -s metadata_validation.json ]; then
             echo '{"error":"Metadata validation failed"}' > metadata_validation.json
           fi
+
 
       # -------------------------------
       # 4. Generate Consolidated Validation Report
@@ -213,6 +235,10 @@ jobs:
           STATUS=$(cat coverage_status.txt)
 
           echo "<html><body style='font-family: sans-serif;'><h1>Validation Report</h1>" > validation_report.html
+          echo "<h2>Failing Apex Tests</h2><pre>" >> validation_report.html
+          cat failing_tests.txt >> validation_report.html
+          echo "</pre>" >> validation_report.html
+
 
           echo "<h2>Apex Test Coverage</h2>" >> validation_report.html
           echo "<p><strong>Coverage:</strong> $COVERAGE%</p>" >> validation_report.html
