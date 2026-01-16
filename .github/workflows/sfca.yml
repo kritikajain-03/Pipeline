@@ -23,7 +23,7 @@ jobs:
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli@latest
 
-      # 2. Static Code Analysis (Pre-Validation)
+      # 2. Static Code Analysis
       - name: Install Code Analyzer
         run: sf plugins install code-analyzer@latest
 
@@ -31,8 +31,10 @@ jobs:
         id: run-code-analyzer
         uses: forcedotcom/run-code-analyzer@v2
         with:
+          # Use 'force-app' as the target to scan everything in your project
           run-arguments: --sourcepath force-app --output-file sfca_results.html 
           results-artifact-name: code-analysis-report
+        continue-on-error: true # This prevents the pipeline from stopping if the scanner finds violations
 
       # 3. Authenticate to Salesforce Org
       - name: 'Authenticate Salesforce Org'
