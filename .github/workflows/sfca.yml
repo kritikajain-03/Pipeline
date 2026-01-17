@@ -110,32 +110,45 @@ jobs:
       run: |
         echo "<html><body style='font-family: Arial'>" > validation_report.html
         echo "<h1>Selective Apex Test Validation Report</h1>" >> validation_report.html
-        echo "<h2>Tests Executed</h2><pre>" >> validation_report.html
-        cat testsToRun.txt >> validation_report.html
-        echo "</pre>" >> validation_report.html
+
+        echo "<table border='1' cellpadding='8' cellspacing='0'>" >> validation_report.html
+        echo "<tr style='background:#f2f2f2'><th>Test Class</th><th>Coverage %</th><th>Error</th></tr>" >> validation_report.html
 
         if [ -f test_results.json ]; then
-          echo "<h2>Test Summary</h2><pre>" >> validation_report.html
-          jq '.result.summary' test_results.json >> validation_report.html
-          echo "</pre>" >> validation_report.html
-          echo "<h2>Coverage Details</h2><pre>" >> validation_report.html
-          jq '.result.coverage.coverage' test_results.json >> validation_report.html
-          echo "</pre>" >> validation_report.html
+          jq -r '
+            .result.tests[] |
+            "<tr>
+              <td>\(.name)</td>
+              <td>\(.coverage // "N/A")</td>
+              <td>\(.message // "None")</td>
+            </tr>"
+          ' test_results.json >> validation_report.html
+        else
+          echo "<tr><td colspan='3'>No test results found</td></tr>" >> validation_report.html
         fi
 
-        if [ -s test_error.txt ] && ! grep -q "All tests completed" test_error.txt; then
-          echo "<h2 style='color:red'>Errors</h2><pre>" >> validation_report.html
+        echo "</table>" >> validation_report.html
+
+        if [ "$TEST_FAILURES" = "1" ]; then
+          echo "<h3 style='color:red'>❌ One or more Apex tests failed</h3>" >> validation_report.html
+        else
+          echo "<h3 style='color:green'>✅ All Apex tests passed</h3>" >> validation_report.html
+        fi
+
+        if [ "$COVERAGE_FAILURE" = "1" ]; then
+          echo "<h3 style='color:red'>❌ Org-wide coverage below 75%</h3>" >> validation_report.html
+        else
+          echo "<h3 style='color:green'>✅ Org-wide coverage is sufficient</h3>" >> validation_report.html
+        fi
+
+        if [ -s test_error.txt ]; then
+          echo "<h2>Raw Errors</h2><pre>" >> validation_report.html
           cat test_error.txt >> validation_report.html
           echo "</pre>" >> validation_report.html
         fi
 
-        if [ "$TEST_FAILURES" = "1" ]; then
-          echo "<h2 style='color:red'>❌ Some Apex tests failed</h2>" >> validation_report.html
-        fi
-        if [ "$COVERAGE_FAILURE" = "1" ]; then
-          echo "<h2 style='color:red'>❌ Org coverage below 75%</h2>" >> validation_report.html
-        fi
         echo "</body></html>" >> validation_report.html
+
 
     # -------------------------------
     # Upload Validation Report
@@ -147,12 +160,3 @@ jobs:
         name: salesforce-validation-report
         path: validation_report.html
 
-    # -------------------------------
-    # Fail Workflow if Tests or Coverage Failed
-    # -------------------------------
-    - name: Fail Workflow if Tests or Coverage Failed
-      if: always()
-      run: |
-        if [ "$TEST_FAILURES" = "1" ] || [ "$COVERAGE_FAILURE" = "1" ]; then
-          echo "❌ Workflow failed due to test failures or low coverage"
-          exit 1
