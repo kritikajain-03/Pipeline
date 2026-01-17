@@ -10,6 +10,9 @@ public class LineChartControllerTest {
         );
         insert si;
         
+
+
+        
         Database_Audit__c log1 = new Database_Audit__c(
             User__c = u.Id,
             ObjectName__c = 'Account',
