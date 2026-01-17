@@ -126,7 +126,11 @@ jobs:
           echo "COVERAGE_FAILURE=1" >> $GITHUB_ENV
         fi
 
-        - name: Generate Validation Report
+
+    # -------------------------------
+    # Generate Validation Report
+    # -------------------------------
+    - name: Generate Validation Report
       if: always()
       run: |
         echo "<html><body style='font-family: Arial'>" > validation_report.html
