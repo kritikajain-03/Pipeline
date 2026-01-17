@@ -2,7 +2,7 @@ name: Deploy Master Branch to Production
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - 'force-app/**'
 
