@@ -1,5 +1,4 @@
 const fs = require('fs');
-
 const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH));
 const body = event.pull_request?.body || '';
 
@@ -12,5 +11,4 @@ if (match && match[1]) {
 }
 
 fs.writeFileSync('testsToRun.txt', testsToRun);
-
 console.log('Tests to run:', testsToRun);

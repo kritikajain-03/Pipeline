@@ -2,12 +2,12 @@ name: Validate PR on develop branch
 
 on:
   pull_request:
-    branches: [develop]
+    branches: [main]
     paths:
       - 'force-app/**'
 
 jobs:
-  develop:   # IMPORTANT: must match branch protection expected check
+  main:   # IMPORTANT: must match branch protection expected check
     runs-on: ubuntu-latest
 
     steps:
