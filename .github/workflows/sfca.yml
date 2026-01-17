@@ -1,13 +1,14 @@
-name: Validate PR on develop branch
+name: Validate PR on Develop Branch
 
 on:
   pull_request:
     branches: [develop]
+    types: [opened, synchronize]
     paths:
       - 'force-app/**'
 
 jobs:
-  develop:   # IMPORTANT: must match branch protection expected check
+  validate-pr:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,7 +19,7 @@ jobs:
       uses: actions/checkout@v5
 
     # -------------------------------
-    # Setup Node
+    # Setup Node.js
     # -------------------------------
     - name: Setup Node
       uses: actions/setup-node@v4
@@ -32,9 +33,9 @@ jobs:
       run: npm install -g @salesforce/cli@latest
 
     # -------------------------------
-    # Authenticate Org
+    # Authenticate to Salesforce
     # -------------------------------
-    - name: Authenticate to Salesforce Org
+    - name: Authenticate Org
       run: |
         echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
         sf org login jwt \
@@ -44,46 +45,38 @@ jobs:
           --instance-url ${{ vars.INSTANCE_URL }} \
           --alias testOrg
 
-# -------------------------------
-      # Extract Tests from PR Description
-      # -------------------------------
-    - name: Extract Apex Tests from PR Description
+    # -------------------------------
+    # Extract Apex Tests from PR
+    # -------------------------------
+    - name: Extract Apex Tests
       run: node .github/scripts/extract-tests.js
 
-      # -------------------------------
-      # Initialize failure flags
-      # -------------------------------
+    # -------------------------------
+    # Initialize failure flags
+    # -------------------------------
     - name: Initialize flags
       run: |
         echo "TEST_FAILURES=0" >> $GITHUB_ENV
         echo "COVERAGE_FAILURE=0" >> $GITHUB_ENV
 
-      # -------------------------------
-      # Run Apex Tests (continue flow even if fail)
-      # -------------------------------
+    # -------------------------------
+    # Run Apex Tests
+    # -------------------------------
     - name: Run Apex Tests
       continue-on-error: true
       run: |
         TESTS=$(cat testsToRun.txt)
 
         if [ "$TESTS" = "all" ]; then
-          echo "No Apex tests specified in PR description" > test_error.txt
-          exit 0
-        fi
+          echo "Running all tests"
+          sf apex test run --target-org testOrg --code-coverage --result-format json --wait 30 > test_results.json 2> test_error.txt || true
+        else
+          echo "Running selected tests: $TESTS"
+          sf apex test run --target-org testOrg --tests "$TESTS" --code-coverage --result-format json --wait 30 > test_results.json 2> test_error.txt || true
 
-        echo "Running selected tests: $TESTS"
-
-        sf apex test run \
-          --target-org testOrg \
-          --tests "$TESTS" \
-          --code-coverage \
-          --result-format json \
-          --wait 30 \
-          > test_results.json 2> test_error.txt || true
-
-      # -------------------------------
-      # Evaluate Test Results (set flag)
-      # -------------------------------
+    # -------------------------------
+    # Evaluate Test Results
+    # -------------------------------
     - name: Evaluate Apex Test Results
       run: |
         if [ -f test_results.json ]; then
@@ -94,25 +87,24 @@ jobs:
           fi
         fi
 
-      # -------------------------------
-      # Enforce 75% Org Coverage (set flag)
-      # -------------------------------
-    - name: Enforce Coverage Threshold
-        run: |
-          if [ -f test_results.json ]; then
-            ORG_COVERAGE=$(jq -r '.result.summary.orgWideCoverage' test_results.json)
-            ORG_COVERAGE=${ORG_COVERAGE%\%}
-            echo "Org Wide Coverage: $ORG_COVERAGE%"
-
-            if (( $(echo "$ORG_COVERAGE < 75" | bc -l) )); then
-              echo "COVERAGE_FAILURE=1" >> $GITHUB_ENV
-              echo "❌ Org wide coverage below 75%"
-            fi
+    # -------------------------------
+    # Enforce Coverage Threshold
+    # -------------------------------
+    - name: Enforce 75% Org Coverage
+      run: |
+        if [ -f test_results.json ]; then
+          ORG_COVERAGE=$(jq -r '.result.summary.orgWideCoverage' test_results.json)
+          ORG_COVERAGE=${ORG_COVERAGE%\%}
+          echo "Org Wide Coverage: $ORG_COVERAGE%"
+          if (( $(echo "$ORG_COVERAGE < 75" | bc -l) )); then
+            echo "COVERAGE_FAILURE=1" >> $GITHUB_ENV
+            echo "❌ Org wide coverage below 75%"
           fi
+        fi
 
-      # -------------------------------
-      # Generate Validation Report
-      # -------------------------------
+    # -------------------------------
+    # Generate Validation Report
+    # -------------------------------
     - name: Generate Validation Report
       if: always()
       run: |
@@ -121,6 +113,7 @@ jobs:
         echo "<h2>Tests Executed</h2><pre>" >> validation_report.html
         cat testsToRun.txt >> validation_report.html
         echo "</pre>" >> validation_report.html
+
         if [ -f test_results.json ]; then
           echo "<h2>Test Summary</h2><pre>" >> validation_report.html
           jq '.result.summary' test_results.json >> validation_report.html
@@ -130,27 +123,23 @@ jobs:
           echo "</pre>" >> validation_report.html
         fi
 
-        # Only show real errors
         if [ -s test_error.txt ] && ! grep -q "All tests completed" test_error.txt; then
           echo "<h2 style='color:red'>Errors</h2><pre>" >> validation_report.html
           cat test_error.txt >> validation_report.html
           echo "</pre>" >> validation_report.html
         fi
 
-        # Show failure flags in report
         if [ "$TEST_FAILURES" = "1" ]; then
           echo "<h2 style='color:red'>❌ Some Apex tests failed</h2>" >> validation_report.html
         fi
-
         if [ "$COVERAGE_FAILURE" = "1" ]; then
           echo "<h2 style='color:red'>❌ Org coverage below 75%</h2>" >> validation_report.html
         fi
-
         echo "</body></html>" >> validation_report.html
 
-      # -------------------------------
-      # Upload Validation Report
-      # -------------------------------
+    # -------------------------------
+    # Upload Validation Report
+    # -------------------------------
     - name: Upload Validation Report
       if: always()
       uses: actions/upload-artifact@v4
@@ -159,7 +148,7 @@ jobs:
         path: validation_report.html
 
     # -------------------------------
-    # Fail the workflow if tests or coverage failed (after report)
+    # Fail Workflow if Tests or Coverage Failed
     # -------------------------------
     - name: Fail Workflow if Tests or Coverage Failed
       if: always()
@@ -167,4 +156,3 @@ jobs:
         if [ "$TEST_FAILURES" = "1" ] || [ "$COVERAGE_FAILURE" = "1" ]; then
           echo "❌ Workflow failed due to test failures or low coverage"
           exit 1
-        fi

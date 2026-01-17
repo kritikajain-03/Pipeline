@@ -1,0 +1,46 @@
+name: Deploy Master Branch to Production
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'force-app/**'
+
+jobs:
+  deploy-master:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install Salesforce CLI
+      run: npm install -g @salesforce/cli@latest
+
+    # Authenticate
+    - name: Authenticate to Production Org
+      run: |
+        echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+        sf org login jwt \
+          --client-id ${{ secrets.CONSUMER_KEY }} \
+          --jwt-key-file server.key \
+          --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
+          --instance-url ${{ vars.INSTANCE_URL }} \
+          --alias production
+
+    # Deploy entire branch
+    - name: Deploy entire branch
+      run: |
+        sfdx force:source:deploy -p "force-app" --testlevel RunLocalTests --json
+
+    # Deploy destructive changes
+    - name: Deploy destructive changes
+      run: |
+        sfdx force:mdapi:deploy -d "force-app/destructiveChanges" --ignorewarnings
