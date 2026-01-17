@@ -136,30 +136,33 @@ jobs:
         echo "<html><body style='font-family: Arial'>" > validation_report.html
         echo "<h1>Salesforce PR Validation Report</h1>" >> validation_report.html
 
-        echo "<h2>Apex Test Results</h2>" >> validation_report.html
-        echo "<table border='1' cellpadding='8' cellspacing='0'>" >> validation_report.html
-        echo "<tr style='background:#f2f2f2'>
-              <th>Test Class</th>
-              <th>Method</th>
-              <th>Status</th>
-              <th>Error</th>
-              </tr>" >> validation_report.html
-
         if [ -f test_results.json ]; then
-          jq -r '
-            .result.tests[] |
-            "<tr>
-              <td>\(.apexClass.name)</td>
-              <td>\(.methodName)</td>
-              <td>\(.outcome)</td>
-              <td>\(.message // "None")</td>
-            </tr>"
-          ' test_results.json >> validation_report.html
+          TESTS_RAN=$(jq '.result.summary.testsRan' test_results.json)
+          PASSING=$(jq '.result.summary.passing' test_results.json)
+          FAILING=$(jq '.result.summary.failing' test_results.json)
+          COVERAGE=$(jq -r '.result.summary.orgWideCoverage' test_results.json)
+
+          echo "<h2>Apex Test Summary</h2>" >> validation_report.html
+          echo "<p><b>Tests Ran:</b> $TESTS_RAN</p>" >> validation_report.html
+          echo "<p><b>Passing:</b> $PASSING</p>" >> validation_report.html
+          echo "<p><b>Failing:</b> $FAILING</p>" >> validation_report.html
+          echo "<p><b>Org-Wide Coverage:</b> $COVERAGE</p>" >> validation_report.html
+
+          # Show failures only
+          if [ "$FAILING" -gt 0 ]; then
+            echo "<h2 style='color:red'>Failed Tests</h2><pre>" >> validation_report.html
+            jq '.result.tests[] | select(.outcome=="Fail")' test_results.json >> validation_report.html
+            echo "</pre>" >> validation_report.html
+          fi
         else
-          echo "<tr><td colspan='4'>No test results available</td></tr>" >> validation_report.html
+          echo "<h2 style='color:red'>❌ No test results generated</h2>" >> validation_report.html
         fi
 
-        echo "</table>" >> validation_report.html
+        if [ -s test_error.txt ]; then
+          echo "<h2>CLI Errors</h2><pre>" >> validation_report.html
+          cat test_error.txt >> validation_report.html
+          echo "</pre>" >> validation_report.html
+        fi
 
         if [ "$TEST_FAILURES" = "1" ]; then
           echo "<h3 style='color:red'>❌ Apex tests failed</h3>" >> validation_report.html
@@ -171,12 +174,6 @@ jobs:
           echo "<h3 style='color:red'>❌ Org-wide coverage below 75%</h3>" >> validation_report.html
         else
           echo "<h3 style='color:green'>✅ Org-wide coverage ≥ 75%</h3>" >> validation_report.html
-        fi
-
-        if [ -s test_error.txt ]; then
-          echo "<h2>Raw Errors</h2><pre>" >> validation_report.html
-          cat test_error.txt >> validation_report.html
-          echo "</pre>" >> validation_report.html
         fi
 
         echo "</body></html>" >> validation_report.html
