@@ -7,21 +7,33 @@ on:
       - 'force-app/**'
 
 jobs:
-  validate:
+  develop:   # IMPORTANT: must match branch protection expected check
     runs-on: ubuntu-latest
 
     steps:
+    # -------------------------------
+    # Checkout
+    # -------------------------------
     - name: Checkout repository
       uses: actions/checkout@v5
 
+    # -------------------------------
+    # Setup Node
+    # -------------------------------
     - name: Setup Node
       uses: actions/setup-node@v4
       with:
         node-version: '20'
 
+    # -------------------------------
+    # Install Salesforce CLI
+    # -------------------------------
     - name: Install Salesforce CLI
       run: npm install -g @salesforce/cli@latest
 
+    # -------------------------------
+    # Authenticate Org
+    # -------------------------------
     - name: Authenticate to Salesforce Org
       run: |
         echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
@@ -32,44 +44,50 @@ jobs:
           --instance-url ${{ vars.INSTANCE_URL }} \
           --alias testOrg
 
-    # 🔴 STEP 1: Extract test classes from PR body
+    # -------------------------------
+    # Extract Tests from PR Description
+    # -------------------------------
     - name: Extract Apex Tests from PR Description
       run: node .github/scripts/extract-tests.js
 
-    # 🔴 STEP 2: Run only selected tests
+    # -------------------------------
+    # Run Selective Apex Tests
+    # -------------------------------
     - name: Run Apex Tests
       run: |
         TESTS=$(cat testsToRun.txt)
 
         if [ "$TESTS" = "all" ]; then
-          echo "Running all local tests"
-          sf apex test run \
-            --target-org testOrg \
-            --test-level RunLocalTests \
-            --code-coverage \
-            --result-format json \
-            --wait 30 > test_results.json
-        else
-          echo "Running selected tests: $TESTS"
-          sf apex test run \
-            --target-org testOrg \
-            --tests "$TESTS" \
-            --code-coverage \
-            --result-format json \
-            --wait 30 > test_results.json
+          echo "❌ No Apex tests specified in PR description"
+          exit 1
         fi
 
-    # 🔴 STEP 3: Fail job if any test fails
+        echo "Running selected tests: $TESTS"
+
+        sf apex test run \
+          --target-org testOrg \
+          --tests "$TESTS" \
+          --code-coverage \
+          --result-format json \
+          --wait 30 \
+          > test_results.json
+
+    # -------------------------------
+    # Fail if Any Selected Test Fails
+    # -------------------------------
     - name: Fail if Apex tests failed
       run: |
         FAILURES=$(jq '.result.summary.failing' test_results.json)
 
         if [ "$FAILURES" -gt 0 ]; then
-          echo "❌ Apex tests failed"
+          echo "❌ Selected Apex tests failed"
+          jq '.result.tests[] | select(.Outcome=="Fail")' test_results.json
           exit 1
         fi
 
-    # 🔴 STEP 4: Enforce 75% coverage
+    # -------------------------------
+    # Enforce 75% Coverage (only if tests passed)
+    # -------------------------------
     - name: Enforce Coverage Threshold
       run: |
         COVERAGE=$(jq '
@@ -83,15 +101,32 @@ jobs:
           exit 1
         fi
 
-    # STEP 5: Generate Report (always runs)
+    # -------------------------------
+    # Generate Validation Report
+    # -------------------------------
     - name: Generate Validation Report
       if: always()
       run: |
-        echo "<html><body><h1>Validation Report</h1>" > validation_report.html
-        echo "<pre>" >> validation_report.html
-        cat test_results.json >> validation_report.html
-        echo "</pre></body></html>" >> validation_report.html
+        echo "<html><body style='font-family: Arial'>" > validation_report.html
+        echo "<h1>Selective Apex Test Validation Report</h1>" >> validation_report.html
 
+        echo "<h2>Tests Executed</h2><pre>" >> validation_report.html
+        cat testsToRun.txt >> validation_report.html
+        echo "</pre>" >> validation_report.html
+
+        echo "<h2>Test Summary</h2><pre>" >> validation_report.html
+        jq '.result.summary' test_results.json >> validation_report.html
+        echo "</pre>" >> validation_report.html
+
+        echo "<h2>Coverage Details</h2><pre>" >> validation_report.html
+        jq '.result.coverage.coverage' test_results.json >> validation_report.html
+        echo "</pre>" >> validation_report.html
+
+        echo "</body></html>" >> validation_report.html
+
+    # -------------------------------
+    # Upload Report
+    # -------------------------------
     - name: Upload Validation Report
       if: always()
       uses: actions/upload-artifact@v4
