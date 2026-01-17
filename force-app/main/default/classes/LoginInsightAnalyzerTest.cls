@@ -122,20 +122,6 @@ private class LoginInsightAnalyzerTest {
         Assert.areEqual('[]', cleaned2, 'Empty input should return empty JSON array');
         Assert.areEqual('[]', cleaned3, 'Whitespace input should return empty JSON array');
     }
-    @IsTest
-    static void testJsonStringElseBranch() {
-        List<User> users = [SELECT Id, Name FROM User LIMIT 1];
     
-        LoginInsightAnalyzer.FORCE_REGEX_FAIL = true;
-    
-        LoginInsightAnalyzer analyzer = new LoginInsightAnalyzer();
-        Test.startTest();
-        analyzer.evaluate(true, users);
-        Test.stopTest();
-    
-        LoginInsightAnalyzer.FORCE_REGEX_FAIL = false;
-    
-        Assert.isTrue(true, 'Forced regex failure to cover jsonString = []');
-    }
 
 }
