@@ -13,10 +13,12 @@ jobs:
 
     steps:
     # -------------------------------
-    # Checkout
+    # Checkout repository
     # -------------------------------
     - name: Checkout repository
       uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
 
     # -------------------------------
     # Setup Node.js
@@ -27,13 +29,19 @@ jobs:
         node-version: '20'
 
     # -------------------------------
+    # Install system tools
+    # -------------------------------
+    - name: Install jq
+      run: sudo apt-get update && sudo apt-get install -y jq
+
+    # -------------------------------
     # Install Salesforce CLI
     # -------------------------------
     - name: Install Salesforce CLI
       run: npm install -g @salesforce/cli@latest
 
     # -------------------------------
-    # Authenticate to Salesforce
+    # Authenticate to Salesforce (JWT)
     # -------------------------------
     - name: Authenticate Org
       run: |
@@ -69,10 +77,20 @@ jobs:
 
         if [ "$TESTS" = "all" ]; then
           echo "Running all tests"
-          sf apex test run --target-org testOrg --code-coverage --result-format json --wait 30 > test_results.json 2> test_error.txt || true
+          sf apex test run \
+            --target-org testOrg \
+            --code-coverage \
+            --result-format json \
+            --wait 30 > test_results.json 2> test_error.txt || true
         else
           echo "Running selected tests: $TESTS"
-          sf apex test run --target-org testOrg --tests "$TESTS" --code-coverage --result-format json --wait 30 > test_results.json 2> test_error.txt || true
+          sf apex test run \
+            --target-org testOrg \
+            --tests "$TESTS" \
+            --code-coverage \
+            --result-format json \
+            --wait 30 > test_results.json 2> test_error.txt || true
+        fi
 
     # -------------------------------
     # Evaluate Test Results
@@ -80,26 +98,32 @@ jobs:
     - name: Evaluate Apex Test Results
       run: |
         if [ -f test_results.json ]; then
-          FAILURES=$(jq '.result.summary.failing' test_results.json)
+          FAILURES=$(jq '.result.summary.failing // 0' test_results.json)
           if [ "$FAILURES" -gt 0 ]; then
             echo "TEST_FAILURES=1" >> $GITHUB_ENV
             echo "❌ Apex test failures detected"
           fi
+        else
+          echo "TEST_FAILURES=1" >> $GITHUB_ENV
+          echo "❌ No test result file found"
         fi
 
     # -------------------------------
-    # Enforce Coverage Threshold
+    # Enforce 75% Org-Wide Coverage
     # -------------------------------
     - name: Enforce 75% Org Coverage
       run: |
         if [ -f test_results.json ]; then
-          ORG_COVERAGE=$(jq -r '.result.summary.orgWideCoverage' test_results.json)
+          ORG_COVERAGE=$(jq -r '.result.summary.orgWideCoverage // 0' test_results.json)
           ORG_COVERAGE=${ORG_COVERAGE%\%}
           echo "Org Wide Coverage: $ORG_COVERAGE%"
-          if (( $(echo "$ORG_COVERAGE < 75" | bc -l) )); then
+
+          if [ "$ORG_COVERAGE" -lt 75 ]; then
             echo "COVERAGE_FAILURE=1" >> $GITHUB_ENV
             echo "❌ Org wide coverage below 75%"
           fi
+        else
+          echo "COVERAGE_FAILURE=1" >> $GITHUB_ENV
         fi
 
     # -------------------------------
@@ -109,36 +133,37 @@ jobs:
       if: always()
       run: |
         echo "<html><body style='font-family: Arial'>" > validation_report.html
-        echo "<h1>Selective Apex Test Validation Report</h1>" >> validation_report.html
+        echo "<h1>Salesforce PR Validation Report</h1>" >> validation_report.html
 
+        echo "<h2>Apex Test Results</h2>" >> validation_report.html
         echo "<table border='1' cellpadding='8' cellspacing='0'>" >> validation_report.html
-        echo "<tr style='background:#f2f2f2'><th>Test Class</th><th>Coverage %</th><th>Error</th></tr>" >> validation_report.html
+        echo "<tr style='background:#f2f2f2'><th>Test Class</th><th>Status</th><th>Message</th></tr>" >> validation_report.html
 
         if [ -f test_results.json ]; then
           jq -r '
             .result.tests[] |
             "<tr>
               <td>\(.name)</td>
-              <td>\(.coverage // "N/A")</td>
+              <td>\(.outcome)</td>
               <td>\(.message // "None")</td>
             </tr>"
           ' test_results.json >> validation_report.html
         else
-          echo "<tr><td colspan='3'>No test results found</td></tr>" >> validation_report.html
+          echo "<tr><td colspan='3'>No test results available</td></tr>" >> validation_report.html
         fi
 
         echo "</table>" >> validation_report.html
 
         if [ "$TEST_FAILURES" = "1" ]; then
-          echo "<h3 style='color:red'>❌ One or more Apex tests failed</h3>" >> validation_report.html
+          echo "<h3 style='color:red'>❌ Apex tests failed</h3>" >> validation_report.html
         else
-          echo "<h3 style='color:green'>✅ All Apex tests passed</h3>" >> validation_report.html
+          echo "<h3 style='color:green'>✅ Apex tests passed</h3>" >> validation_report.html
         fi
 
         if [ "$COVERAGE_FAILURE" = "1" ]; then
           echo "<h3 style='color:red'>❌ Org-wide coverage below 75%</h3>" >> validation_report.html
         else
-          echo "<h3 style='color:green'>✅ Org-wide coverage is sufficient</h3>" >> validation_report.html
+          echo "<h3 style='color:green'>✅ Org-wide coverage ≥ 75%</h3>" >> validation_report.html
         fi
 
         if [ -s test_error.txt ]; then
@@ -148,7 +173,6 @@ jobs:
         fi
 
         echo "</body></html>" >> validation_report.html
-
 
     # -------------------------------
     # Upload Validation Report
@@ -160,3 +184,14 @@ jobs:
         name: salesforce-validation-report
         path: validation_report.html
 
+    # -------------------------------
+    # Final PR Gate (FAIL / PASS)
+    # -------------------------------
+    - name: Final Validation Gate
+      run: |
+        if [ "$TEST_FAILURES" = "1" ] || [ "$COVERAGE_FAILURE" = "1" ]; then
+          echo "❌ PR validation failed"
+          exit 1
+        else
+          echo "✅ PR validation passed"
+        fi
