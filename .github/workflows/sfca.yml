@@ -44,15 +44,23 @@ jobs:
           --instance-url ${{ vars.INSTANCE_URL }} \
           --alias testOrg
 
-    # -------------------------------
-    # Extract Tests from PR Description
-    # -------------------------------
+# -------------------------------
+      # Extract Tests from PR Description
+      # -------------------------------
     - name: Extract Apex Tests from PR Description
       run: node .github/scripts/extract-tests.js
 
-    # -------------------------------
-    # Run Selective Apex Tests (DO NOT FAIL HERE)
-    # -------------------------------
+      # -------------------------------
+      # Initialize failure flags
+      # -------------------------------
+    - name: Initialize flags
+      run: |
+        echo "TEST_FAILURES=0" >> $GITHUB_ENV
+        echo "COVERAGE_FAILURE=0" >> $GITHUB_ENV
+
+      # -------------------------------
+      # Run Apex Tests (continue flow even if fail)
+      # -------------------------------
     - name: Run Apex Tests
       continue-on-error: true
       run: |
@@ -73,62 +81,50 @@ jobs:
           --wait 30 \
           > test_results.json 2> test_error.txt || true
 
-    # -------------------------------
-    # Evaluate Test Results
-    # -------------------------------
+      # -------------------------------
+      # Evaluate Test Results (set flag)
+      # -------------------------------
     - name: Evaluate Apex Test Results
       run: |
-        if [ ! -f test_results.json ]; then
-          echo "❌ Apex tests did not execute"
-          exit 1
+        if [ -f test_results.json ]; then
+          FAILURES=$(jq '.result.summary.failing' test_results.json)
+          if [ "$FAILURES" -gt 0 ]; then
+            echo "TEST_FAILURES=1" >> $GITHUB_ENV
+            echo "❌ Apex test failures detected"
+          fi
         fi
 
-        FAILURES=$(jq '.result.summary.failing' test_results.json)
-
-        if [ "$FAILURES" -gt 0 ]; then
-          echo "❌ Apex test failures detected"
-          exit 1
-        fi
-
-    # -------------------------------
-    # Enforce 75% Org Coverage
-    # -------------------------------
+      # -------------------------------
+      # Enforce 75% Org Coverage (set flag)
+      # -------------------------------
     - name: Enforce Coverage Threshold
-      run: |
-        if [ ! -f test_results.json ]; then
-          echo "Skipping coverage check (tests did not run)"
-          exit 1
-        fi
+        run: |
+          if [ -f test_results.json ]; then
+            ORG_COVERAGE=$(jq -r '.result.summary.orgWideCoverage' test_results.json)
+            ORG_COVERAGE=${ORG_COVERAGE%\%}
+            echo "Org Wide Coverage: $ORG_COVERAGE%"
 
-        # Use correct JSON path and remove %
-        ORG_COVERAGE=$(jq -r '.result.summary.orgWideCoverage' test_results.json)
-        ORG_COVERAGE=${ORG_COVERAGE%\%}
+            if (( $(echo "$ORG_COVERAGE < 75" | bc -l) )); then
+              echo "COVERAGE_FAILURE=1" >> $GITHUB_ENV
+              echo "❌ Org wide coverage below 75%"
+            fi
+          fi
 
-        echo "Org Wide Coverage: $ORG_COVERAGE%"
-
-        if (( $(echo "$ORG_COVERAGE < 75" | bc -l) )); then
-          echo "❌ Org wide coverage below 75%"
-          exit 1
-        fi
-
-    # -------------------------------
-    # Generate Validation Report
-    # -------------------------------
+      # -------------------------------
+      # Generate Validation Report
+      # -------------------------------
     - name: Generate Validation Report
       if: always()
       run: |
         echo "<html><body style='font-family: Arial'>" > validation_report.html
         echo "<h1>Selective Apex Test Validation Report</h1>" >> validation_report.html
-
         echo "<h2>Tests Executed</h2><pre>" >> validation_report.html
         cat testsToRun.txt >> validation_report.html
         echo "</pre>" >> validation_report.html
-
         if [ -f test_results.json ]; then
           echo "<h2>Test Summary</h2><pre>" >> validation_report.html
           jq '.result.summary' test_results.json >> validation_report.html
           echo "</pre>" >> validation_report.html
-
           echo "<h2>Coverage Details</h2><pre>" >> validation_report.html
           jq '.result.coverage.coverage' test_results.json >> validation_report.html
           echo "</pre>" >> validation_report.html
@@ -141,14 +137,34 @@ jobs:
           echo "</pre>" >> validation_report.html
         fi
 
+        # Show failure flags in report
+        if [ "$TEST_FAILURES" = "1" ]; then
+          echo "<h2 style='color:red'>❌ Some Apex tests failed</h2>" >> validation_report.html
+        fi
+
+        if [ "$COVERAGE_FAILURE" = "1" ]; then
+          echo "<h2 style='color:red'>❌ Org coverage below 75%</h2>" >> validation_report.html
+        fi
+
         echo "</body></html>" >> validation_report.html
 
-    # -------------------------------
-    # Upload Report
-    # -------------------------------
+      # -------------------------------
+      # Upload Validation Report
+      # -------------------------------
     - name: Upload Validation Report
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: salesforce-validation-report
         path: validation_report.html
+
+    # -------------------------------
+    # Fail the workflow if tests or coverage failed (after report)
+    # -------------------------------
+    - name: Fail Workflow if Tests or Coverage Failed
+      if: always()
+      run: |
+        if [ "$TEST_FAILURES" = "1" ] || [ "$COVERAGE_FAILURE" = "1" ]; then
+          echo "❌ Workflow failed due to test failures or low coverage"
+          exit 1
+        fi
