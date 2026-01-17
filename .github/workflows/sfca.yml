@@ -51,15 +51,16 @@ jobs:
       run: node .github/scripts/extract-tests.js
 
     # -------------------------------
-    # Run Selective Apex Tests
+    # Run Selective Apex Tests (DO NOT FAIL HERE)
     # -------------------------------
     - name: Run Apex Tests
+      continue-on-error: true
       run: |
         TESTS=$(cat testsToRun.txt)
 
         if [ "$TESTS" = "all" ]; then
-          echo "❌ No Apex tests specified in PR description"
-          exit 1
+          echo "No Apex tests specified in PR description" > test_error.txt
+          exit 0
         fi
 
         echo "Running selected tests: $TESTS"
@@ -70,26 +71,37 @@ jobs:
           --code-coverage \
           --result-format json \
           --wait 30 \
-          > test_results.json
+          > test_results.json 2> test_error.txt || true
+
 
     # -------------------------------
-    # Fail if Any Selected Test Fails
+    # Evaluate Test Results
     # -------------------------------
-    - name: Fail if Apex tests failed
+    - name: Evaluate Apex Test Results
       run: |
-        FAILURES=$(jq '.result.summary.failing' test_results.json)
-
-        if [ "$FAILURES" -gt 0 ]; then
-          echo "❌ Selected Apex tests failed"
-          jq '.result.tests[] | select(.Outcome=="Fail")' test_results.json
+        if [ ! -f test_results.json ]; then
+          echo "❌ Apex tests did not execute"
           exit 1
         fi
 
-    # -------------------------------
+        FAILURES=$(jq '.result.summary.failing' test_results.json)
+
+        if [ "$FAILURES" -gt 0 ]; then
+          echo "❌ Apex test failures detected"
+          exit 1
+        fi
+
+
+   # -------------------------------
     # Enforce 75% Org Coverage
     # -------------------------------
     - name: Enforce Coverage Threshold
       run: |
+        if [ ! -f test_results.json ]; then
+          echo "Skipping coverage check (tests did not run)"
+          exit 1
+        fi
+
         ORG_COVERAGE=$(jq '.result.coverage.orgWideCoverage' test_results.json)
 
         echo "Org Wide Coverage: $ORG_COVERAGE%"
@@ -98,6 +110,7 @@ jobs:
           echo "❌ Org wide coverage below 75%"
           exit 1
         fi
+
 
 
     # -------------------------------
@@ -113,15 +126,24 @@ jobs:
         cat testsToRun.txt >> validation_report.html
         echo "</pre>" >> validation_report.html
 
-        echo "<h2>Test Summary</h2><pre>" >> validation_report.html
-        jq '.result.summary' test_results.json >> validation_report.html
-        echo "</pre>" >> validation_report.html
+        if [ -f test_results.json ]; then
+          echo "<h2>Test Summary</h2><pre>" >> validation_report.html
+          jq '.result.summary' test_results.json >> validation_report.html
+          echo "</pre>" >> validation_report.html
 
-        echo "<h2>Coverage Details</h2><pre>" >> validation_report.html
-        jq '.result.coverage.coverage' test_results.json >> validation_report.html
-        echo "</pre>" >> validation_report.html
+          echo "<h2>Coverage Details</h2><pre>" >> validation_report.html
+          jq '.result.coverage.coverage' test_results.json >> validation_report.html
+          echo "</pre>" >> validation_report.html
+        fi
+
+        if [ -f test_error.txt ]; then
+          echo "<h2 style='color:red'>Errors</h2><pre>" >> validation_report.html
+          cat test_error.txt >> validation_report.html
+          echo "</pre>" >> validation_report.html
+        fi
 
         echo "</body></html>" >> validation_report.html
+
 
     # -------------------------------
     # Upload Report
