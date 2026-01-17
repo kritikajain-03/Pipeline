@@ -126,10 +126,7 @@ jobs:
           echo "COVERAGE_FAILURE=1" >> $GITHUB_ENV
         fi
 
-    # -------------------------------
-    # Generate Validation Report
-    # -------------------------------
-    - name: Generate Validation Report
+        - name: Generate Validation Report
       if: always()
       run: |
         echo "<html><body style='font-family: Arial'>" > validation_report.html
@@ -137,19 +134,25 @@ jobs:
 
         echo "<h2>Apex Test Results</h2>" >> validation_report.html
         echo "<table border='1' cellpadding='8' cellspacing='0'>" >> validation_report.html
-        echo "<tr style='background:#f2f2f2'><th>Test Class</th><th>Status</th><th>Message</th></tr>" >> validation_report.html
+        echo "<tr style='background:#f2f2f2'>
+              <th>Test Class</th>
+              <th>Method</th>
+              <th>Status</th>
+              <th>Error</th>
+              </tr>" >> validation_report.html
 
         if [ -f test_results.json ]; then
           jq -r '
             .result.tests[] |
             "<tr>
-              <td>\(.name)</td>
+              <td>\(.apexClass.name)</td>
+              <td>\(.methodName)</td>
               <td>\(.outcome)</td>
               <td>\(.message // "None")</td>
             </tr>"
           ' test_results.json >> validation_report.html
         else
-          echo "<tr><td colspan='3'>No test results available</td></tr>" >> validation_report.html
+          echo "<tr><td colspan='4'>No test results available</td></tr>" >> validation_report.html
         fi
 
         echo "</table>" >> validation_report.html
@@ -173,6 +176,7 @@ jobs:
         fi
 
         echo "</body></html>" >> validation_report.html
+
 
     # -------------------------------
     # Upload Validation Report
