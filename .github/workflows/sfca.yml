@@ -83,12 +83,13 @@ jobs:
           --wait 30 \
           --json > deploy_result.json 2> deploy_error.txt || true
 
-    # -------------------------------
+        # -------------------------------
     # Evaluate deployment result
     # -------------------------------
     - name: Evaluate Validation Result
       run: |
         STATUS=$(jq -r '.result.status // "Failed"' deploy_result.json 2>/dev/null)
+        FAILURES=$(jq -r '.result.details.runTestResult.failures[]?.message' deploy_result.json 2>/dev/null)
 
         echo "Deployment Status: $STATUS"
 
@@ -100,6 +101,12 @@ jobs:
 
         if [ "$STATUS" != "Succeeded" ] && [ "$STATUS" != "SucceededPartial" ]; then
           echo "❌ PR validation failed"
+          echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
+          exit 1
+        fi
+
+        if [ -n "$FAILURES" ]; then
+          echo "❌ Test failures detected"
           echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
           exit 1
         fi
@@ -119,7 +126,11 @@ jobs:
 
         if [ -s deploy_error.txt ]; then
           echo "<p style='color:red'><b>Error :</b></p><pre>" >> validation_report.html
-          sed 's/\x1b \[[0-9;]*m//g' deploy_error.txt >> validation_report.html
+          sed 's/\x1b\[[0-9;]*m//g' deploy_error.txt >> validation_report.html
+          echo "</pre>" >> validation_report.html
+        elif [ -n "$FAILURES" ]; then
+          echo "<p style='color:red'><b>Test Failures :</b></p><pre>" >> validation_report.html
+          echo "$FAILURES" >> validation_report.html
           echo "</pre>" >> validation_report.html
         else
           echo "<p style='color:green'><b>Error :</b> None</p>" >> validation_report.html
@@ -132,6 +143,7 @@ jobs:
         fi
 
         echo "</body></html>" >> validation_report.html
+
 
     # -------------------------------
     # Upload report
