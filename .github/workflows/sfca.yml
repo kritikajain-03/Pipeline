@@ -69,53 +69,53 @@ jobs:
       run: |
         echo "VALIDATION_FAILED=0" >> $GITHUB_ENV
 
+    # ... (Previous steps remain the same until Validate PR code)
+
     # -------------------------------
     # Check-only deploy PR code + tests
     # -------------------------------
-    - name: Validate PR code with specified tests
-      if: ${{ env.APEX_TESTS != 'all' }}
+    - name: Validate PR code
+      id: validate_step
       run: |
-        sf project deploy start \
-          --target-org targetOrg \
-          --source-dir force-app \
-          --test-level RunSpecifiedTests \
-          --tests "$APEX_TESTS" \
-          --dry-run \
-          --wait 30 \
-          --json > deploy_result.json 2> deploy_error.txt || true
+        # Combined logic: check if APEX_TESTS is 'all' or specific
+        TEST_LEVEL="RunSpecifiedTests"
+        TEST_PARAM="--tests $APEX_TESTS"
+        
+        if [ "$APEX_TESTS" = "all" ]; then
+          TEST_LEVEL="RunLocalTests"
+          TEST_PARAM=""
+        fi
 
-    - name: Validate PR code with all tests
-      if: ${{ env.APEX_TESTS == 'all' }}
-      run: |
         sf project deploy start \
           --target-org targetOrg \
           --source-dir force-app \
-          --test-level RunLocalTests \
+          --test-level $TEST_LEVEL \
+          $TEST_PARAM \
           --dry-run \
           --wait 30 \
-          --json > deploy_result.json 2> deploy_error.txt || true
+          --json > deploy_result.json 2> deploy_error.txt || echo "Validation command execution finished"
 
     # -------------------------------
     # Evaluate deployment result
     # -------------------------------
     - name: Evaluate Validation Result
+      id: evaluate
       run: |
-        if [ -s deploy_error.txt ]; then
-          echo "❌ Deployment validation error"
-          echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
-        fi
-
-        STATUS=$(jq -r '.result.status // "Failed"' deploy_result.json 2>/dev/null)
-
-        echo "Deployment Status: $STATUS"
+        # Extract status and error message using jq
+        STATUS=$(jq -r '.result.status' deploy_result.json)
+        # Extract detailed error messages (component or test failures)
+        ERROR_MSG=$(jq -r '.message // .result.errorMessage // .result.details.componentFailures[0].problem // .result.details.runTestResult.failures[0].message // "No specific error message found"' deploy_result.json)
+        
+        echo "status=$STATUS" >> $GITHUB_OUTPUT
+        echo "error_msg=$ERROR_MSG" >> $GITHUB_OUTPUT
 
         if [ "$STATUS" != "Succeeded" ] && [ "$STATUS" != "SucceededPartial" ]; then
-          echo "❌ PR validation failed"
+          echo "❌ PR validation failed: $STATUS"
           echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
-          else
-            echo "✅ PR validation passed"
+        else
+          echo "✅ PR validation passed"
+          echo "VALIDATION_FAILED=0" >> $GITHUB_ENV
         fi
-
 
     # -------------------------------
     # Generate HTML report
@@ -125,31 +125,25 @@ jobs:
       run: |
         echo "<html><body style='font-family:Arial'>" > validation_report.html
         echo "<h1>Salesforce PR Validation Report</h1>" >> validation_report.html
-
         echo "<p><b>Test Class Name :</b> $APEX_TESTS</p>" >> validation_report.html
 
-        if [ -s deploy_error.txt ]; then
-          echo "<p style='color:red'><b>Error :</b></p><pre>" >> validation_report.html
-          sed 's/\x1b\[[0-9;]*m//g' deploy_error.txt >> validation_report.html
-          echo "</pre>" >> validation_report.html
-        else
-          echo "<p style='color:green'><b>Error :</b> None</p>" >> validation_report.html
-        fi
-
         if [ "$VALIDATION_FAILED" = "1" ]; then
+          echo "<p style='color:red'><b>Error Details:</b></p>" >> validation_report.html
+          echo "<pre>${{ steps.evaluate.outputs.error_msg }}</pre>" >> validation_report.html
           echo "<h3 style='color:red'>❌ PR Validation Failed</h3>" >> validation_report.html
         else
+          echo "<p style='color:green'><b>Error :</b> None</p>" >> validation_report.html
           echo "<h3 style='color:green'>✅ PR Validation Passed</h3>" >> validation_report.html
         fi
-
         echo "</body></html>" >> validation_report.html
 
     # -------------------------------
-    # Upload report
+    # Final Step: Fail the workflow to block Merge
     # -------------------------------
-    - name: Upload Validation Report
+    - name: Check Final Status
       if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: salesforce-pr-validation-report
-        path: validation_report.html
+      run: |
+        if [ "$VALIDATION_FAILED" = "1" ]; then
+          echo "Failing job to prevent merge..."
+          exit 1
+        fi
