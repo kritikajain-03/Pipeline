@@ -4,97 +4,47 @@ on:
   pull_request:
     paths:
       - 'force-app/main/default/**'
-      - 'sfca-config.yml'
+      - 'code-analyzer.yml'
+
+# Permissions required to write the summary/review to the PR UI
+permissions:
+  pull-requests: write
+  contents: read
+  statuses: write
 
 jobs:
   sfca:
     runs-on: ubuntu-latest
 
     steps:
-      # -------------------------------
-      # Checkout repository
-      # -------------------------------
       - name: Checkout repository
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
-      # -------------------------------
-      # Setup Salesforce CLI
-      # -------------------------------
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli@latest
 
       - name: Install Salesforce Code Analyzer Plugin
         run: sf plugins install code-analyzer@latest
 
-      # -------------------------------
-      # Run Salesforce Code Analyzer
-      # -------------------------------
+      # Run the analyzer and give it an ID so we can reference its outputs
       - name: Run Salesforce Code Analyzer
+        id: run-analyzer
         uses: forcedotcom/run-code-analyzer@v2
         with:
-          run-arguments: >
-            --workspace .
-            --target force-app/main/default
-            --view detail
-            --output-file sfca_results.html
-            --output-file sfca_results.json
+          run-arguments: --workspace . --target ./force-app/main/default --view detail --output-file sfca_results.html --output-file sfca_results.json
           results-artifact-name: salesforce-code-analyzer-results
           github-token: ${{ github.token }}
 
-      # -------------------------------
-      # Parse results & fail if violations exist
-      # -------------------------------
-      - name: Evaluate Code Analyzer Results
+      # Fail the PR and show count in UI
+      - name: Check for violations
+        if: always() # Run even if previous step failed
         run: |
-          if [ ! -f sfca_results.json ]; then
-            echo "❌ Results file not found"
-            exit 1
-          fi
-
-          VIOLATION_COUNT=$(jq '[.runs[]?.results[]?] | length' sfca_results.json)
-
-          echo "Violations found: $VIOLATION_COUNT"
-
-          echo "### Salesforce Code Analyzer Report" >> $GITHUB_STEP_SUMMARY
-          echo "- Violations found: **$VIOLATION_COUNT**" >> $GITHUB_STEP_SUMMARY
-
-          if [ "$VIOLATION_COUNT" -gt 0 ]; then
-            echo "❌ Salesforce Code Analyzer failed"
+          VIOLATIONS=${{ steps.run-analyzer.outputs.num-violations }}
+          echo "### Salesforce Code Analyzer violation count: $VIOLATIONS" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$VIOLATIONS" -gt 0 ]; then
+            echo "::error::Salesforce Code Analyzer found $VIOLATIONS violations. Failing PR."
             exit 1
           else
-            echo "✅ No violations found"
+            echo "No violations found. PR passed."
           fi
-
-
-      # comment on ui 
-      - name: Comment violation count on PR
-        if: |
-          always() &&
-          github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-
-            if (!fs.existsSync('sfca_results.json')) {
-              console.log('No results file found, skipping comment');
-              return;
-            }
-
-            const data = JSON.parse(fs.readFileSync('sfca_results.json'));
-            const count = (data.runs || [])
-              .flatMap(r => r.results || [])
-              .length;
-
-            const body = count > 0
-              ? `❌ **Salesforce Code Analyzer Failed**\n\n**Violations found:** ${count}`
-              : `✅ **Salesforce Code Analyzer Passed**\n\nNo violations found`;
-
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body
-            });
