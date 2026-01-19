@@ -1,197 +1,85 @@
-# Workflow to generate validation report without blocking merge
-name: Generate Validation Report
+# Unique name for this workflow
+name: Validate and Generate Report
 
+# Trigger: run on PRs to develop branch
 on:
-    pull_request:
-      types: [opened, synchronize]
-      branches: [ develop ]
-      paths:
-        - 'force-app/**'
+  pull_request:
+    types: [opened, synchronize]
+    branches: [ develop ]
+    paths:
+      - 'force-app/**'
 
 jobs:
-    generate-validation-report:
-        runs-on: ubuntu-latest
-        if: ${{ github.actor != 'dependabot[bot]' }}
-        # This job will always run and won't block merge
+  validate-and-report:
+    runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' }}
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Checkout source code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli@latest
+
+      - name: Install sfdx-git-delta plugin
+        run: echo 'y' | sfdx plugins:install sfdx-git-delta
+
+      - name: Install Java
+        run: |
+          sudo apt-get update
+          sudo apt install default-jdk
+
+      - name: Install SFDX scanner
+        run: sf plugins install @salesforce/sfdx-scanner --force
+
+      - name: Populate auth file with SFDX_URL secret of integration org
+        shell: bash
+        run: |
+          echo ${{ secrets.SFDX_INTEGRATION_URL}} > ./SFDX_INTEGRATION_URL.txt
+
+      - name: Authenticate to Integration Org
+        run: sfdx auth:sfdxurl:store -f ./SFDX_INTEGRATION_URL.txt -s -a integration
+
+      - name: Create delta packages
+        run: |
+          mkdir changed-sources
+          sfdx sgd:source:delta --to "HEAD" --from "HEAD^" --output changed-sources/ --generate-delta --source force-app/
+
+      - name: Run tests and capture JSON
+        run: |
+          sf project deploy start \
+            --manifest "changed-sources/package/package.xml" \
+            --dry-run \
+            --test-level RunLocalTests \
+            --json > testResults.json
         continue-on-error: true
-        
-        steps:
-            - name: Setup Node
-              uses: actions/setup-node@v4
-              with:
-                node-version: '20'
 
-            - name: 'Checkout source code'
-              uses: actions/checkout@v3
-              with:
-                fetch-depth: 0
+      - name: Parse test results into HTML report
+        run: |
+          node -e "
+          const fs=require('fs');
+          const results=JSON.parse(fs.readFileSync('testResults.json','utf8'));
+          let html='<html><head><title>Test Report</title></head><body><h1>Salesforce Test Validation Report</h1><ul>';
+          if(results.result && results.result.tests){
+            results.result.tests.forEach(t=>{
+              html+=`<li><strong>${t.name}</strong>: ${t.outcome}${t.message?'<br/>Error: '+t.message:''}</li>`;
+            });
+          }
+          html+='</ul></body></html>';
+          fs.writeFileSync('report.html',html);
+          "
 
-            - name: 'Read PR Body'
-              env:
-                PR_BODY: ${{github.event.pull_request.body}}
-              run: |
-                  echo $PR_BODY > ./pr_body.txt
-                  node ./parsePR.js              
-                  TESTS=$(cat testsToRun.txt)       
-                  echo "APEX_TESTS=$TESTS" >> $GITHUB_ENV
-                  
-            - name: Install Salesforce CLI
-              run: npm install -g @salesforce/cli@latest
 
-            - name: 'Install sfdx-git-delta plugin'
-              run: echo 'y' | sfdx plugins:install sfdx-git-delta
+      - name: Upload raw test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: Test-Validation-Report
+          path: testResults.json
 
-            - name: 'Installing java'
-              run: |
-                sudo apt-get update
-                sudo apt install default-jdk
 
-            - name: 'Installing SFDX scanner'
-              run: sf plugins install @salesforce/sfdx-scanner --force
-
-            - name: 'Populate auth file with SFDX_URL secret of integration org'
-              shell: bash
-              run: |
-                  echo ${{ secrets.SFDX_INTEGRATION_URL}} > ./SFDX_INTEGRATION_URL.txt
-
-            - name: 'Authenticate to Integration Org'
-              run: sfdx auth:sfdxurl:store -f ./SFDX_INTEGRATION_URL.txt -s -a integration
-
-            - name: 'Create delta packages for new, modified or deleted metadata'
-              run: |
-                mkdir changed-sources
-                sfdx sgd:source:delta --to "HEAD" --from "HEAD^" --output changed-sources/ --generate-delta --source force-app/
-
-            - name: 'Scan code'
-              continue-on-error: true
-              run: |
-                  cd changed-sources
-                  sf scanner run --format sarif --target './**/*.cls' \
-                  --category "Design,Best Practices,Performance" \
-                  --outfile 'apexScanResults.sarif'
-                  cd ..
-
-            - name: Upload SARIF file
-              uses: github/codeql-action/upload-sarif@v3
-              with:
-                sarif_file: changed-sources/apexScanResults.sarif
-
-            # Run validation and capture detailed output
-            - name: 'Validate deployment - run specified tests'
-              if: ${{ env.APEX_TESTS != 'all' }}
-              continue-on-error: true
-              run: |
-                  sf project deploy start --manifest "changed-sources/package/package.xml" --dry-run --test-level RunSpecifiedTests --tests ${{env.APEX_TESTS}} --json > validation_result.json 2>&1 || true
-                  echo "VALIDATION_EXIT_CODE=$?" >> $GITHUB_ENV
-
-            - name: 'Validate deployment - run all tests'
-              if: ${{ env.APEX_TESTS == 'all' }}
-              continue-on-error: true
-              run: |
-                  sf project deploy start --manifest "changed-sources/package/package.xml" --dry-run --test-level RunLocalTests --json > validation_result.json 2>&1 || true
-                  echo "VALIDATION_EXIT_CODE=$?" >> $GITHUB_ENV
-
-            # Generate detailed report
-            - name: 'Generate validation report'
-              if: always()
-              run: |
-                  cat > generate_report.js << 'EOF'
-                  const fs = require('fs');
-                  
-                  let report = '# 📊 Salesforce Validation Report\n\n';
-                  report += `**Pull Request:** #${{ github.event.pull_request.number }}\n`;
-                  report += `**Branch:** \`${{ github.head_ref }}\` → \`${{ github.base_ref }}\`\n`;
-                  report += `**Triggered by:** @${{ github.actor }}\n`;
-                  report += `**Timestamp:** ${new Date().toISOString()}\n\n`;
-                  report += '---\n\n';
-                  
-                  try {
-                      const result = JSON.parse(fs.readFileSync('validation_result.json', 'utf8'));
-                      
-                      if (result.status === 0) {
-                          report += '## ✅ Validation Successful\n\n';
-                          report += 'All tests passed and deployment validation completed successfully.\n\n';
-                      } else {
-                          report += '## ❌ Validation Failed\n\n';
-                      }
-                      
-                      // Extract test results
-                      if (result.result && result.result.details) {
-                          const details = result.result.details;
-                          
-                          // Component failures
-                          if (details.componentFailures && details.componentFailures.length > 0) {
-                              report += '### 🔴 Component Failures\n\n';
-                              details.componentFailures.forEach(failure => {
-                                  report += `**File:** \`${failure.fullName}\` (${failure.componentType})\n`;
-                                  report += `**Problem:** ${failure.problem}\n`;
-                                  if (failure.lineNumber) report += `**Line:** ${failure.lineNumber}\n`;
-                                  if (failure.columnNumber) report += `**Column:** ${failure.columnNumber}\n`;
-                                  report += '\n';
-                              });
-                          }
-                          
-                          // Test failures
-                          if (details.runTestResult) {
-                              const testResult = details.runTestResult;
-                              
-                              report += '### 🧪 Test Results Summary\n\n';
-                              report += `- **Total Tests:** ${testResult.numTestsRun || 0}\n`;
-                              report += `- **Passed:** ${(testResult.numTestsRun || 0) - (testResult.numFailures || 0)}\n`;
-                              report += `- **Failed:** ${testResult.numFailures || 0}\n`;
-                              report += `- **Code Coverage:** ${testResult.codeCoverage ? Math.round((testResult.codeCoverage.reduce((sum, c) => sum + c.numLocationsCovered, 0) / testResult.codeCoverage.reduce((sum, c) => sum + c.numLocations, 0)) * 100) : 'N/A'}%\n\n`;
-                              
-                              if (testResult.failures && testResult.failures.length > 0) {
-                                  report += '### ❌ Failed Tests\n\n';
-                                  testResult.failures.forEach(failure => {
-                                      report += `#### \`${failure.name}\` - ${failure.methodName}\n`;
-                                      report += `**Message:** ${failure.message}\n`;
-                                      if (failure.stackTrace) {
-                                          report += '**Stack Trace:**\n```\n' + failure.stackTrace + '\n```\n';
-                                      }
-                                      report += '\n';
-                                  });
-                              }
-                              
-                              // Code coverage warnings
-                              if (testResult.codeCoverageWarnings && testResult.codeCoverageWarnings.length > 0) {
-                                  report += '### ⚠️ Code Coverage Warnings\n\n';
-                                  testResult.codeCoverageWarnings.forEach(warning => {
-                                      report += `- ${warning.message}\n`;
-                                  });
-                                  report += '\n';
-                              }
-                          }
-                      }
-                      
-                  } catch (error) {
-                      report += '## ⚠️ Unable to Parse Validation Results\n\n';
-                      report += `Error: ${error.message}\n\n`;
-                      report += '### Raw Output\n```\n';
-                      try {
-                          report += fs.readFileSync('validation_result.json', 'utf8');
-                      } catch (e) {
-                          report += 'No validation output available';
-                      }
-                      report += '\n```\n';
-                  }
-                  
-                  report += '\n---\n';
-                  report += '*This report is for informational purposes only and does not block merging.*';
-                  
-                  fs.writeFileSync('validation_report.md', report);
-                  console.log('Report generated successfully');
-                  EOF
-                  
-                  node generate_report.js
-
-            # Upload report as artifact
-            - name: 'Upload validation report as artifact'
-              if: always()
-              uses: actions/upload-artifact@v3
-              with:
-                name: validation-report
-                path: |
-                  validation_report.md
-                  validation_result.json
-                retention-days: 30
