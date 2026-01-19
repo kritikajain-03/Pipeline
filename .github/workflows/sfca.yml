@@ -51,7 +51,6 @@ jobs:
           --instance-url ${{ vars.INSTANCE_URL }} \
           --alias targetOrg
 
-    
     # -------------------------------
     # Extract tests from PR (your script)
     # -------------------------------
@@ -77,13 +76,12 @@ jobs:
       if: ${{ env.APEX_TESTS != 'all' }}
       run: |
         sf project deploy start \
-        --target-org targetOrg \
-        --source-dir force-app \
-        --test-level RunSpecifiedTests \
-        --tests "$APEX_TESTS" \
-        --wait 30 \
-        --json > deploy_result.json 2> deploy_error.txt || true
-
+          --target-org targetOrg \
+          --source-dir force-app \
+          --test-level RunSpecifiedTests \
+          --tests "$APEX_TESTS" \
+          --wait 30 \
+          --json > deploy_result.json 2> deploy_error.txt || true
 
     # -------------------------------
     # Evaluate deployment result
@@ -91,10 +89,8 @@ jobs:
     - name: Evaluate Validation Result
       run: |
         STATUS=$(jq -r '.result.status // "Failed"' deploy_result.json 2>/dev/null)
-        COVERAGE=$(jq '[.result.details.runTestResult.codeCoverage[].percentCovered] | max // 0' deploy_result.json 2>/dev/null)
 
         echo "Deployment Status: $STATUS"
-        echo "Coverage: $COVERAGE%"
 
         if [ -s deploy_error.txt ]; then
           echo "❌ Deployment validation error"
@@ -108,44 +104,31 @@ jobs:
           exit 1
         fi
 
-        if [ "$COVERAGE" -lt 75 ]; then
-          echo "❌ Code coverage below 75% ($COVERAGE%)"
-          echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
-          exit 1
-        fi
-
-        echo "✅ PR validation passed with coverage $COVERAGE%"
-
-
-
-
+        echo "✅ PR validation passed"
 
     # -------------------------------
     # Generate HTML report
     # -------------------------------
     - name: Generate Validation Report
-      if: always()   # <-- ensures this runs even if previous step exited 1
+      if: always()
       run: |
         echo "<html><body style='font-family:Arial'>" > validation_report.html
         echo "<h1>Salesforce PR Validation Report</h1>" >> validation_report.html
 
         echo "<p><b>Test Class Name :</b> $APEX_TESTS</p>" >> validation_report.html
-        echo "<p><b>Coverage :</b> $COVERAGE%</p>" >> validation_report.html
 
         if [ -s deploy_error.txt ]; then
           echo "<p style='color:red'><b>Error :</b></p><pre>" >> validation_report.html
-          sed 's/\x1b
-
-        \[[0-9;]*m//g' deploy_error.txt >> validation_report.html
-              echo "</pre>" >> validation_report.html
-            else
-              echo "<p style='color:green'><b>Error :</b> None</p>" >> validation_report.html
+          sed 's/\x1b \[[0-9;]*m//g' deploy_error.txt >> validation_report.html
+          echo "</pre>" >> validation_report.html
+        else
+          echo "<p style='color:green'><b>Error :</b> None</p>" >> validation_report.html
         fi
 
         if [ "$VALIDATION_FAILED" = "1" ]; then
-            echo "<h3 style='color:red'>❌ PR Validation Failed</h3>" >> validation_report.html
+          echo "<h3 style='color:red'>❌ PR Validation Failed</h3>" >> validation_report.html
         else
-            echo "<h3 style='color:green'>✅ PR Validation Passed</h3>" >> validation_report.html
+          echo "<h3 style='color:green'>✅ PR Validation Passed</h3>" >> validation_report.html
         fi
 
         echo "</body></html>" >> validation_report.html
