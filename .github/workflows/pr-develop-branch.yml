@@ -31,9 +31,12 @@ jobs:
         if: ${{ github.actor != 'dependabot[bot]' }}
         steps:
             # Now we install nodejs in the VM, and specify version 14
-            - uses: actions/setup-node@v3
+            - name: Setup Node
+              uses: actions/setup-node@v4
               with:
-                node-version: '18'
+                node-version: '20'
+
+                
 
 
             # The idea is that the VM can access your remote repository
@@ -91,7 +94,9 @@ jobs:
                   echo "APEX_TESTS=$TESTS" >> $GITHUB_ENV
                   
             # Now Install Salesforce CLI
-            - uses: forcedotcom/sfdx-action@v1
+            - name: Install Salesforce CLI
+              run: npm install -g @salesforce/cli@latest
+
 
 
             # Then we install the SFDX-Git-Delta plugin - https://github.com/scolladon/sfdx-git-delta
