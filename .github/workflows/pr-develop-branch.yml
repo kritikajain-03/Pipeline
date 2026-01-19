@@ -144,9 +144,15 @@ jobs:
 
           # Generate the delta (the difference) between the current PR and the develop branch
             - name: 'Create delta packages for new, modified or deleted metadata'
-              run: | 
-                  mkdir changed-sources
-                  sf sgd:source:delta --to "HEAD" --from "origin/develop" --output changed-sources/ --generate-delta --source force-app/
+              run: |
+                mkdir -p changed-sources
+                sf sgd source delta \
+                  --to HEAD \
+                  --from origin/develop \
+                  --output changed-sources \
+                  --generate-delta \
+                  --source force-app
+
             # Now we can use the sfdx scanner to scan the code in the delta directory
             # The output of the scan is stored in a file called apexScanResults.sarif
 
