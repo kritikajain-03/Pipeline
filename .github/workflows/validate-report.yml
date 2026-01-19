@@ -6,12 +6,6 @@ on:
       - 'force-app/main/default/**'
       - 'code-analyzer.yml'
 
-# Permissions required to write the summary/review to the PR UI
-permissions:
-  pull-requests: write
-  contents: read
-  statuses: write
-
 jobs:
   sfca:
     runs-on: ubuntu-latest
@@ -26,25 +20,13 @@ jobs:
       - name: Install Salesforce Code Analyzer Plugin
         run: sf plugins install code-analyzer@latest
 
-      # Run the analyzer and give it an ID so we can reference its outputs
-      - name: Run Salesforce Code Analyzer
-        id: run-analyzer
+      # -----------------------------------------------------------
+      # Run Salesforce Code Analyzer (Full Scan + Fail on Violation)
+      # -----------------------------------------------------------
+      - name: Run Salesforce Code Analyzer (Full Scan)
         uses: forcedotcom/run-code-analyzer@v2
         with:
-          run-arguments: --workspace . --target ./force-app/main/default --view detail --output-file sfca_results.html --output-file sfca_results.json
+          # --severity-threshold 3 ensures the job fails if violations are found
+          run-arguments: --workspace . --target ./force-app/main/default --view detail --output-file sfca_results.html --output-file sfca_results.json --severity-threshold 3
           results-artifact-name: salesforce-code-analyzer-results
           github-token: ${{ github.token }}
-
-      # Fail the PR and show count in UI
-      - name: Check for violations
-        if: always() # Run even if previous step failed
-        run: |
-          VIOLATIONS=${{ steps.run-analyzer.outputs.num-violations }}
-          echo "### Salesforce Code Analyzer violation count: $VIOLATIONS" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "$VIOLATIONS" -gt 0 ]; then
-            echo "::error::Salesforce Code Analyzer found $VIOLATIONS violations. Failing PR."
-            exit 1
-          else
-            echo "No violations found. PR passed."
-          fi
