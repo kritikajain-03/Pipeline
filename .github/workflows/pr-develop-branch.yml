@@ -142,16 +142,21 @@ jobs:
             - name: 'Authenticate to Integration Org'
               run: sfdx auth:sfdxurl:store -f ./SFDX_INTEGRATION_URL.txt -s -a integration
 
+            - name: Verify sgd command
+              run: sfdx sgd:source:delta --help
+
+
           # Generate the delta (the difference) between the current PR and the develop branch
             - name: 'Create delta packages for new, modified or deleted metadata'
               run: |
                 mkdir -p changed-sources
-                sf sgd source delta \
+                sfdx sgd:source:delta \
                   --to HEAD \
                   --from origin/develop \
                   --output changed-sources \
                   --generate-delta \
                   --source force-app
+
 
             # Now we can use the sfdx scanner to scan the code in the delta directory
             # The output of the scan is stored in a file called apexScanResults.sarif
