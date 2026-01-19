@@ -77,13 +77,13 @@ jobs:
       if: ${{ env.APEX_TESTS != 'all' }}
       run: |
         sf project deploy start \
-          --target-org targetOrg \
-          --source-dir force-app \
-          --test-level RunSpecifiedTests \
-          --tests "$APEX_TESTS" \
-          --dry-run \
-          --wait 30 \
-          --json > deploy_result.json 2> deploy_error.txt || true
+        --target-org targetOrg \
+        --source-dir force-app \
+        --test-level RunSpecifiedTests \
+        --tests "$APEX_TESTS" \
+        --wait 30 \
+        --json > deploy_result.json 2> deploy_error.txt || true
+
 
     # -------------------------------
     # Evaluate deployment result
@@ -91,7 +91,7 @@ jobs:
     - name: Evaluate Validation Result
       run: |
         STATUS=$(jq -r '.result.status // "Failed"' deploy_result.json 2>/dev/null)
-        COVERAGE=$(jq -r '.result.details.runTestResult.codeCoverage[0].percentCovered // 0' deploy_result.json 2>/dev/null)
+        COVERAGE=$(jq '[.result.details.runTestResult.codeCoverage[].percentCovered] | max // 0' deploy_result.json 2>/dev/null)
 
         echo "Deployment Status: $STATUS"
         echo "Coverage: $COVERAGE%"
