@@ -88,6 +88,10 @@ jobs:
               run: | 
                   mkdir changed-sources
                   sfdx sgd:source:delta --to "HEAD" --from "HEAD^" --output changed-sources/ --generate-delta --source force-app/ 
+                  name: List files to deploy
+              run: |
+                echo "Files in changed-sources:"
+                ls -la changed-sources/
 
             - name: 'Scan code'
               run: |
