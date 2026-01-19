@@ -6,6 +6,7 @@ public class DummyPipelineCheckTest {
         Integer result = DummyPipelineCheck.add(5, 3);
         System.assertEquals(8, result, 'Addition result is incorrect');
     }
+    
     @IsTest
     static void testSubtractMethod() {
         Integer result = DummyPipelineCheck.subtract(10, 4);
