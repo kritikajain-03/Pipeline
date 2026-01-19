@@ -61,28 +61,37 @@ jobs:
       # -------------------------------
       - name: Generate Validation Report
         run: |
-          node <<EOF
+          node <<'EOF'
           const fs = require('fs');
-          const data = JSON.parse(fs.readFileSync('test-result.json', 'utf8'));
 
-          let report = `## Salesforce PR Validation Report\n\n`;
+          const raw = fs.readFileSync('test-result.json', 'utf8');
+          const data = JSON.parse(raw);
+
+          let report = '## Salesforce PR Validation Report\n\n';
 
           if (data.status === 0) {
-            report += `✅ **All tests passed successfully**\n`;
+            report += '✅ **All tests passed successfully**\n';
           } else {
-            report += `❌ **Test Failures Detected**\n\n`;
+            report += '❌ **Test Failures Detected**\n\n';
+
             const failures =
-              data.result?.details?.runTestResult?.failures || [];
+              data?.result?.details?.runTestResult?.failures || [];
+
+            if (failures.length === 0) {
+              report += '_Tests failed but no failure details were returned._\n';
+            }
 
             failures.forEach(f => {
               report += `### ❌ ${f.name}.${f.methodName}\n`;
-              report += `**Message:** ${f.message}\n`;
-              report += `**StackTrace:**\n\`\`\`\n${f.stackTrace}\n\`\`\`\n\n`;
+              report += `**Message:** ${f.message}\n\n`;
+              report += `**Stack Trace:**\n\`\`\`\n${f.stackTrace}\n\`\`\`\n\n`;
             });
           }
 
           fs.writeFileSync('PR_VALIDATION_REPORT.md', report);
+          console.log('Validation report generated');
           EOF
+
 
       # -------------------------------
       # PUBLISH REPORT
