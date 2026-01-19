@@ -12,7 +12,6 @@ private class PermissionAuditControllerTest {
         PermissionSet ps = TestDataFactory.createPermissionSet();
         TestDataFactory.createObjectPermissions(ps.Id);
         TestDataFactory.assignPermissionSetToUser(ps, users[0]);
-
         // Add object permissions for user's profile as well
         TestDataFactory.createObjectPermissions(users[0].ProfileId);
     }
