@@ -1,72 +1,97 @@
-# Unique name for this workflow
-name: Validate and Generate Report
+name: PR Validation Report (Non-blocking)
 
-# Trigger: run on PRs to develop branch
 on:
   pull_request:
+    branches: [develop]
     types: [opened, synchronize]
-    branches: [ develop ]
     paths:
       - 'force-app/**'
 
 jobs:
-  validate-and-report:
+  validation-report:
     runs-on: ubuntu-latest
     if: ${{ github.actor != 'dependabot[bot]' }}
+
     steps:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Checkout source code
-        uses: actions/checkout@v3
+      - name: Checkout source
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli@latest
 
-      - name: Install sfdx-git-delta plugin
+      - name: Install sfdx-git-delta
         run: echo 'y' | sfdx plugins:install sfdx-git-delta
 
-      - name: Install Java
+      - name: Authenticate Org
         run: |
-          sudo apt-get update
-          sudo apt install default-jdk
+          echo "${{ secrets.SFDX_INTEGRATION_URL }}" > sfdxurl.txt
+          sfdx auth:sfdxurl:store -f sfdxurl.txt -s -a integration
 
-      - name: Install SFDX scanner
-        run: sf plugins install @salesforce/sfdx-scanner --force
-
-      - name: Populate auth file with SFDX_URL secret of integration org
-        shell: bash
-        run: |
-          echo ${{ secrets.SFDX_INTEGRATION_URL}} > ./SFDX_INTEGRATION_URL.txt
-
-      - name: Authenticate to Integration Org
-        run: sfdx auth:sfdxurl:store -f ./SFDX_INTEGRATION_URL.txt -s -a integration
-
-      - name: Create delta packages
+      - name: Generate delta
         run: |
           mkdir changed-sources
-          sfdx sgd:source:delta --to "HEAD" --from "HEAD^" --output changed-sources/ --generate-delta --source force-app/
+          sfdx sgd:source:delta \
+            --to "HEAD" \
+            --from "HEAD^" \
+            --output changed-sources \
+            --generate-delta \
+            --source force-app/
 
-      - name: Run tests and capture JSON
+      # -------------------------------
+      # RUN TESTS (NON BLOCKING)
+      # -------------------------------
+      - name: Validate Apex Tests (Report Mode)
+        continue-on-error: true
         run: |
           sf project deploy start \
-            --manifest "changed-sources/package/package.xml" \
+            --manifest changed-sources/package/package.xml \
             --dry-run \
             --test-level RunLocalTests \
-            --json > testResults.json
-        continue-on-error: true
+            --json > test-result.json
 
-      - name: Parse test results into HTML report
+      # -------------------------------
+      # PARSE RESULT
+      # -------------------------------
+      - name: Generate Validation Report
         run: |
-          node ./scripts/parseTestResults.js testResults.json report.html
+          node <<EOF
+          const fs = require('fs');
+          const data = JSON.parse(fs.readFileSync('test-result.json', 'utf8'));
 
-      - name: Upload report artifact
+          let report = `## Salesforce PR Validation Report\n\n`;
+
+          if (data.status === 0) {
+            report += `✅ **All tests passed successfully**\n`;
+          } else {
+            report += `❌ **Test Failures Detected**\n\n`;
+            const failures =
+              data.result?.details?.runTestResult?.failures || [];
+
+            failures.forEach(f => {
+              report += `### ❌ ${f.name}.${f.methodName}\n`;
+              report += `**Message:** ${f.message}\n`;
+              report += `**StackTrace:**\n\`\`\`\n${f.stackTrace}\n\`\`\`\n\n`;
+            });
+          }
+
+          fs.writeFileSync('PR_VALIDATION_REPORT.md', report);
+          EOF
+
+      # -------------------------------
+      # PUBLISH REPORT
+      # -------------------------------
+      - name: Upload Report Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Test-Validation-Report
-          path: report.html
+          name: PR-Validation-Report
+          path: PR_VALIDATION_REPORT.md
 
+      - name: Publish Report to PR Summary
+        run: cat PR_VALIDATION_REPORT.md >> $GITHUB_STEP_SUMMARY
