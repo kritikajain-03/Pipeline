@@ -1,232 +1,70 @@
-# Unique name for this workflow - generates detailed report without blocking merge
-name: Generate Validation Report
+# Unique name for this workflow
+name: Validate and Generate Report
 
-# Definition when the workflow should run
+# Trigger: run on PRs to develop branch
 on:
-    # The workflow will run whenever an event happens on a pull request
-    pull_request:
-      # The events are that a PR is opened, or when a commit is pushed
-      # to a branch that has an existing pull request
-      types: [opened, synchronize]
-      # Run on develop branch only
-      branches: [ develop ]
-      # Only care about Salesforce source changes
-      paths:
-        - 'force-app/**'
+  pull_request:
+    types: [opened, synchronize]
+    branches: [ develop ]
+    paths:
+      - 'force-app/**'
 
-# Jobs to be executed when the above conditions are met
 jobs:
-    generate-validation-report:
-        runs-on: ubuntu-latest
-        if: ${{ github.actor != 'dependabot[bot]' }}
-        steps:
-            # Setup Node.js
-            - name: Setup Node
-              uses: actions/setup-node@v4
-              with:
-                node-version: '20'
+  validate-and-report:
+    runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' }}
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-            # Checkout source code
-            - name: 'Checkout source code'
-              uses: actions/checkout@v3
-              with:
-                fetch-depth: 0
+      - name: Checkout source code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-            # Read PR Body for test classes (reuse your existing parsePR.js)
-            - name: 'Read PR Body & Parse Tests'
-              env:
-                PR_BODY: ${{github.event.pull_request.body}}
-              run: |
-                echo $PR_BODY > ./pr_body.txt
-                node ./parsePR.js
-                TESTS=$(cat testsToRun.txt)
-                echo "APEX_TESTS=$TESTS" >> $GITHUB_ENV
-                echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli@latest
 
-            # Install Salesforce CLI
-            - name: Install Salesforce CLI
-              run: npm install -g @salesforce/cli@latest
+      - name: Install sfdx-git-delta plugin
+        run: echo 'y' | sfdx plugins:install sfdx-git-delta
 
-            # Install sfdx-git-delta plugin
-            - name: 'Install sfdx-git-delta plugin'
-              run: echo 'y' | sfdx plugins:install sfdx-git-delta
+      - name: Install Java
+        run: |
+          sudo apt-get update
+          sudo apt install default-jdk
 
-            # Install Java for scanner
-            - name: 'Installing java'
-              run: |
-                sudo apt-get update
-                sudo apt install default-jdk
+      - name: Install SFDX scanner
+        run: sf plugins install @salesforce/sfdx-scanner --force
 
-            # Install SFDX scanner
-            - name: 'Installing SFDX scanner'
-              run: sf plugins install @salesforce/sfdx-scanner --force
+      - name: Populate auth file with SFDX_URL secret of integration org
+        shell: bash
+        run: |
+          echo ${{ secrets.SFDX_INTEGRATION_URL}} > ./SFDX_INTEGRATION_URL.txt
 
-            # Authenticate to Integration Org
-            - name: 'Populate auth file with SFDX_URL secret'
-              shell: bash
-              run: |
-                echo ${{ secrets.SFDX_INTEGRATION_URL}} > ./SFDX_INTEGRATION_URL.txt
+      - name: Authenticate to Integration Org
+        run: sfdx auth:sfdxurl:store -f ./SFDX_INTEGRATION_URL.txt -s -a integration
 
-            - name: 'Authenticate to Integration Org'
-              run: sfdx auth:sfdxurl:store -f ./SFDX_INTEGRATION_URL.txt -s -a integration
+      - name: Create delta packages
+        run: |
+          mkdir changed-sources
+          sfdx sgd:source:delta --to "HEAD" --from "HEAD^" --output changed-sources/ --generate-delta --source force-app/
 
-            # Create delta packages
-            - name: 'Create delta packages'
-              run: |
-                mkdir changed-sources
-                sfdx sgd:source:delta --to "HEAD" --from "HEAD^" --output changed-sources/ --generate-delta --source force-app/
+      - name: Run tests and capture JSON
+        run: |
+          sf project deploy start \
+            --manifest "changed-sources/package/package.xml" \
+            --dry-run \
+            --test-level RunLocalTests \
+            --json > testResults.json
 
-            # List changed files
-            - name: List files to deploy
-              run: |
-                echo "Files in changed-sources:"
-                find changed-sources/ -type f
+      - name: Parse test results into HTML report
+        run: |
+          node ./scripts/parseTestResults.js testResults.json report.html
 
-            # Generate comprehensive report artifacts
-            - name: 'Generate Detailed Validation Report'
-              run: |
-                REPORT_DIR="validation-report-${{ env.PR_NUMBER }}"
-                mkdir -p $REPORT_DIR
-                
-                echo "# Salesforce Validation Report - PR #${{ env.PR_NUMBER }}" > $REPORT_DIR/report.md
-                echo "## Generated: $(date)" >> $REPORT_DIR/report.md
-                echo "## Branch: ${{ github.head_ref }} -> develop" >> $REPORT_DIR/report.md
-                echo "" >> $REPORT_DIR/report.md
-
-            # 1. Code Scan Report
-            - name: 'Run Code Scan & Add to Report'
-              run: |
-                REPORT_DIR="validation-report-${{ env.PR_NUMBER }}"
-                cd changed-sources
-                sf scanner run --format sarif --target './**/*.cls' \
-                --category "Design,Best Practices,Performance" \
-                --outfile 'apexScanResults.sarif'
-                
-                # Convert SARIF to readable format
-                if [ -f apexScanResults.sarif ]; then
-                  echo "## Code Quality Scan Results" >> ../$REPORT_DIR/report.md
-                  echo "| Rule | Severity | File | Line | Message |" >> ../$REPORT_DIR/report.md
-                  echo "|------|----------|------|------|---------|" >> ../$REPORT_DIR/report.md
-                  
-                  # Parse SARIF for human-readable summary (basic parsing)
-                  grep -A 5 '"level":' apexScanResults.sarif | \
-                  sed 's/[{}",]//g' | \
-                  grep -E "(error|warning|note)" | \
-                  head -20 | \
-                  awk '{print "| " $0 " |"}' >> ../$REPORT_DIR/report.md
-                  
-                  cp apexScanResults.sarif ../$REPORT_DIR/
-                fi
-                cd ..
-
-            # 2. Test Class Validation Report
-            - name: 'Validate Test Classes & Capture Errors'
-              run: |
-                REPORT_DIR="validation-report-${{ env.PR_NUMBER }}"
-                
-                echo "## Test Class Validation" >> $REPORT_DIR/report.md
-                echo "" >> $REPORT_DIR/report.md
-                
-                if [ "${{ env.APEX_TESTS }}" != "all" ] && [ -n "${{ env.APEX_TESTS }}" ]; then
-                  echo "### Running Specified Tests: ${{ env.APEX_TESTS }}" >> $REPORT_DIR/report.md
-                  TEST_OUTPUT=$(sf project deploy start --manifest "changed-sources/package/package.xml" \
-                    --dry-run --test-level RunSpecifiedTests --tests ${{env.APEX_TESTS}} --json 2>&1 || true)
-                else
-                  echo "### Running All Local Tests" >> $REPORT_DIR/report.md
-                  TEST_OUTPUT=$(sf project deploy start --manifest "changed-sources/package/package.xml" \
-                    --dry-run --test-level RunLocalTests --json 2>&1 || true)
-                fi
-                
-                echo "$TEST_OUTPUT" > $REPORT_DIR/test-results.json
-                
-                # Extract test failures
-                echo "#### Test Failures:" >> $REPORT_DIR/report.md
-                echo "| Test Class | Method | Error Message |" >> $REPORT_DIR/report.md
-                echo "|------------|--------|---------------|" >> $REPORT_DIR/report.md
-                
-                # Parse JSON for failures (simplified - you can enhance with jq)
-                if echo "$TEST_OUTPUT" | grep -q '"status":"Failed"'; then
-                  echo "$TEST_OUTPUT" | grep -o '"testName":"[^"]*"' | sed 's/"testName":"//' | \
-                  sed 's/"/ | /g' | awk '{print "| " $1 " | Unknown | "}' >> $REPORT_DIR/report.md
-                  
-                  echo "$TEST_OUTPUT" | grep -o '"message":"[^"]*"' | sed 's/"message":"//' | \
-                  head -5 | sed 's/"/ |/g' | awk '{print "| | | " $0 " |"}' >> $REPORT_DIR/report.md
-                else
-                  echo "| ✅ All tests passed | | |" >> $REPORT_DIR/report.md
-                fi
-
-            # 3. Destructive Changes Report
-            - name: 'Check Destructive Changes'
-              run: |
-                REPORT_DIR="validation-report-${{ env.PR_NUMBER }}"
-                echo "## Destructive Changes" >> $REPORT_DIR/report.md
-                
-                if [ -d "changed-sources/destructiveChanges" ] && [ "$(ls -A changed-sources/destructiveChanges)" ]; then
-                  echo "⚠️ **DESTRUCTIVE CHANGES DETECTED**" >> $REPORT_DIR/report.md
-                  find changed-sources/destructiveChanges -name "*.xml" -exec cat {} \; >> $REPORT_DIR/destructive-changes.xml
-                  ls -la changed-sources/destructiveChanges/ >> $REPORT_DIR/report.md
-                else
-                  echo "✅ No destructive changes" >> $REPORT_DIR/report.md
-                fi
-
-            # 4. Changed Files Summary
-            - name: 'List Changed Files'
-              run: |
-                REPORT_DIR="validation-report-${{ env.PR_NUMBER }}"
-                echo "## Changed Files Summary" >> $REPORT_DIR/report.md
-                echo "| File Path | Type |" >> $REPORT_DIR/report.md
-                echo "|-----------|------|" >> $REPORT_DIR/report.md
-                find changed-sources/ -type f | sed 's/changed-sources\///g' | \
-                awk '{print "| " $0 " | File |"}' >> $REPORT_DIR/report.md
-
-            # Upload comprehensive report as artifacts
-            - name: 'Upload Validation Report'
-              uses: actions/upload-artifact@v4
-              with:
-                name: validation-report-pr-${{ env.PR_NUMBER }}
-                path: validation-report-${{ env.PR_NUMBER }}/
-                retention-days: 7
-
-            # Create GitHub Check Summary (visible in PR)
-            - name: 'Create PR Summary'
-              run: |
-                REPORT_DIR="validation-report-${{ env.PR_NUMBER }}"
-                SUMMARY_CONTENT=$(cat $REPORT_DIR/report.md | head -3000 | sed 's/###/📋/g' | sed 's/##/📊/g')
-                
-                echo "$SUMMARY_CONTENT" >> $GITHUB_STEP_SUMMARY
-
-            # Post report comment to PR
-            - name: 'Comment Report Summary on PR'
-              uses: actions/github-script@v7
-              if: always()
-              with:
-                github-token: ${{ secrets.GITHUB_TOKEN }}
-                script: |
-                  const fs = require('fs');
-                  const reportPath = `validation-report-${{ env.PR_NUMBER }}/report.md`;
-                  
-                  if (fs.existsSync(reportPath)) {
-                    const reportContent = fs.readFileSync(reportPath, 'utf8');
-                    const summary = reportContent.split('\n\n').slice(0, 15).join('\n\n');
-                    
-                    await github.rest.issues.createComment({
-                      issue_number: context.issue.number,
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      body: `
-                  🚀 **Validation Report Generated Successfully!**
-
-                  <details>
-                  <summary>📋 Click to view complete report (PR #${{ env.PR_NUMBER }})</summary>
-
-                  \`\`\`markdown
-                  ${summary}
-                  \`\`\`
-
-                  **Download full report:** [validation-report-pr-${{ env.PR_NUMBER }} artifact](#artifacts)
-                  </details>
-
-                  ✅ Report available even if validation failed!
-                                        `
-                                      });
-                                    }
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Test-Validation-Report
+          path: report.html
