@@ -53,7 +53,7 @@ jobs:
             exit 1
           fi
 
-          VIOLATION_COUNT=$(jq '.runs[].results | length' sfca_results.json)
+          VIOLATION_COUNT=$(jq '[.runs[].results[]?] | length' sfca_results.json)
 
           echo "Violations found: $VIOLATION_COUNT"
 
