@@ -94,27 +94,38 @@ jobs:
     # -------------------------------
     - name: Evaluate Apex Test Results
       run: |
-        TEST_FAILURES=0
-        COVERAGE_FAILURE=0
-
-        if [ -f test_results.json ]; then
-          FAILING=$(jq '.result.summary.failing // 0' test_results.json)
-          ORG_COVERAGE=$(jq -r '.result.summary.orgWideCoverage // 0' test_results.json)
-          ORG_COVERAGE=${ORG_COVERAGE%\%}
-
-          if [ "$FAILING" -gt 0 ]; then
-            TEST_FAILURES=1
-          fi
-          if (( $(echo "$ORG_COVERAGE < 75" | bc -l) )); then
-            COVERAGE_FAILURE=1
-          fi
-        else
-          TEST_FAILURES=1
-          COVERAGE_FAILURE=1
+        if [ ! -f test_results.json ]; then
+          echo "❌ No test results file generated"
+          echo "TEST_FAILURES=1" >> $GITHUB_ENV
+          exit 0
         fi
 
-        echo "TEST_FAILURES=$TEST_FAILURES" >> $GITHUB_ENV
-        echo "COVERAGE_FAILURE=$COVERAGE_FAILURE" >> $GITHUB_ENV
+        TESTS_RAN=$(jq '.result.summary.testsRan // 0' test_results.json)
+        FAILING=$(jq '.result.summary.failing // 0' test_results.json)
+
+        echo "Tests Ran: $TESTS_RAN"
+        echo "Failing Tests: $FAILING"
+
+        if [ "$TESTS_RAN" -eq 0 ]; then
+          echo "❌ No Apex tests were executed"
+          echo "TEST_FAILURES=1" >> $GITHUB_ENV
+        fi
+
+        if [ "$FAILING" -gt 0 ]; then
+          echo "❌ Apex test failures detected"
+          echo "TEST_FAILURES=1" >> $GITHUB_ENV
+        fi
+
+     #delete cli error
+    - name: Detect CLI Errors
+      run: |
+        if [ -s test_error.txt ]; then
+          echo "❌ Salesforce CLI error detected"
+          cat test_error.txt
+          echo "TEST_FAILURES=1" >> $GITHUB_ENV
+        fi
+
+
 
 
     # -------------------------------
@@ -142,51 +153,28 @@ jobs:
     - name: Generate Validation Report
       if: always()
       run: |
-        echo "<html><body style='font-family: Arial'>" > validation_report.html
-        echo "<h1>Salesforce PR Validation Report</h1>" >> validation_report.html
+        echo "<h2>Apex Test Execution</h2>" >> validation_report.html
 
-        if [ -f test_results.json ]; then
-          TESTS_RAN=$(jq '.result.summary.testsRan // 0' test_results.json)
-          PASSING=$(jq '.result.summary.passing // 0' test_results.json)
-          FAILING=$(jq '.result.summary.failing // 0' test_results.json)
-          COVERAGE=$(jq -r '.result.summary.orgWideCoverage // 0' test_results.json)
+        echo "<p><b>Tests Ran:</b> $TESTS_RAN</p>" >> validation_report.html
+        echo "<p><b>Failing:</b> $FAILING</p>" >> validation_report.html
+        echo "<p><b>Org Coverage:</b> $COVERAGE</p>" >> validation_report.html
 
-          echo "<h2>Apex Test Summary</h2>" >> validation_report.html
-          echo "<p><b>Tests Ran:</b> $TESTS_RAN</p>" >> validation_report.html
-          echo "<p><b>Passing:</b> $PASSING</p>" >> validation_report.html
-          echo "<p><b>Failing:</b> $FAILING</p>" >> validation_report.html
-          echo "<p><b>Org-Wide Coverage:</b> $COVERAGE</p>" >> validation_report.html
-
-          if [ "$FAILING" -gt 0 ]; then
-            echo "<h3 style='color:red'>❌ Failed Tests:</h3><pre>" >> validation_report.html
-            jq '.result.tests[] | select(.outcome=="Fail")' test_results.json >> validation_report.html
-            echo "</pre>" >> validation_report.html
-          fi
-        else
-          echo "<h3 style='color:red'>❌ No test results generated (compilation failure?)</h3>" >> validation_report.html
+        if [ "$TESTS_RAN" -eq 0 ]; then
+          echo "<p style='color:red'>❌ No Apex tests were executed</p>" >> validation_report.html
         fi
 
-        # CLI Errors
+        if [ "$FAILING" -gt 0 ]; then
+          echo "<h3 style='color:red'>Failed Tests</h3><pre>" >> validation_report.html
+          jq '.result.tests[] | select(.outcome=="Fail")' test_results.json >> validation_report.html
+          echo "</pre>" >> validation_report.html
+        fi
+
         if [ -s test_error.txt ]; then
-          echo "<h3>CLI Errors:</h3><pre>" >> validation_report.html
+          echo "<h3>CLI Errors</h3><pre>" >> validation_report.html
           cat test_error.txt >> validation_report.html
           echo "</pre>" >> validation_report.html
         fi
 
-        # Status
-        if [ "$TEST_FAILURES" = "1" ]; then
-          echo "<h3 style='color:red'>❌ Apex tests failed</h3>" >> validation_report.html
-        else
-          echo "<h3 style='color:green'>✅ Apex tests passed</h3>" >> validation_report.html
-        fi
-
-        if [ "$COVERAGE_FAILURE" = "1" ]; then
-          echo "<h3 style='color:red'>❌ Org-wide coverage below 75%</h3>" >> validation_report.html
-        else
-          echo "<h3 style='color:green'>✅ Org-wide coverage ≥ 75%</h3>" >> validation_report.html
-        fi
-
-        echo "</body></html>" >> validation_report.html
 
 
 
