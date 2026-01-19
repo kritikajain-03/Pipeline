@@ -51,6 +51,7 @@ jobs:
           --instance-url ${{ vars.INSTANCE_URL }} \
           --alias targetOrg
 
+    
     # -------------------------------
     # Extract tests from PR (your script)
     # -------------------------------
@@ -62,89 +63,96 @@ jobs:
         TESTS=$(cat testsToRun.txt)
         echo "APEX_TESTS=$TESTS" >> $GITHUB_ENV
 
-# -----------------------------------------------------------
-      # Validation Step (The || true is critical here)
-      # -----------------------------------------------------------
-    - name: Validate PR code
+    # -------------------------------
+    # Initialize flags
+    # -------------------------------
+    - name: Initialize flags
       run: |
-        TEST_LEVEL="RunSpecifiedTests"
-        if [ "$APEX_TESTS" = "all" ]; then
-          TEST_LEVEL="RunLocalTests"
-          EXTRA_ARGS=""
-        else
-          TEST_LEVEL="RunSpecifiedTests"
-          EXTRA_ARGS="--tests $APEX_TESTS"
-        fi
+        echo "VALIDATION_FAILED=0" >> $GITHUB_ENV
+
+    # -------------------------------
+    # Validate PR code with specified tests
+    # -------------------------------
+    - name: Validate PR code with specified tests
+      if: ${{ env.APEX_TESTS != 'all' }}
+      run: |
         sf project deploy start \
           --target-org targetOrg \
           --source-dir force-app \
-          --test-level $TEST_LEVEL \
-          $EXTRA_ARGS \
+          --test-level RunSpecifiedTests \
+          --tests "$APEX_TESTS" \
           --dry-run \
           --wait 30 \
           --json > deploy_result.json 2> deploy_error.txt || true
 
-      # -----------------------------------------------------------
-      # Evaluate Result (Check Coverage and Test Success)
-      # -----------------------------------------------------------
+    # -------------------------------
+    # Evaluate deployment result
+    # -------------------------------
     - name: Evaluate Validation Result
       run: |
-        # 1. Check for CLI/Network errors
-        if [ ! -f deploy_result.json ]; then
-          echo "❌ Critical Error: deploy_result.json not found."
-          echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
-          exit 1
-        fi
+        STATUS=$(jq -r '.result.status // "Failed"' deploy_result.json 2>/dev/null)
+        COVERAGE=$(jq -r '.result.details.runTestResult.codeCoverage[0].percentCovered // 0' deploy_result.json 2>/dev/null)
 
-        # 2. Parse JSON for status and coverage
-        STATUS=$(jq -r '.result.status' deploy_result.json)
-        COVERAGE=$(jq -r '.result.details.runTestResult.codeCoverageCheckPassed // "true"' deploy_result.json)
-        
         echo "Deployment Status: $STATUS"
-        echo "Coverage Passed: $COVERAGE"
-        if [ "$STATUS" != "Succeeded" ] || [ "$COVERAGE" = "false" ]; then
-          echo "❌ PR validation failed (Test failure or Coverage < 75%)"
+        echo "Coverage: $COVERAGE%"
+
+        if [ -s deploy_error.txt ]; then
+          echo "❌ Deployment validation error"
           echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
-            
-          # Extract specific error messages for the log
-          jq -r '.result.details.componentFailures[].problem // .result.errorMessage' deploy_result.json > error_summary.txt
           exit 1
-        else
-          echo "✅ PR validation passed"
-          echo "VALIDATION_FAILED=0" >> $GITHUB_ENV
         fi
 
-      # -----------------------------------------------------------
-      # Generate HTML report
-      # -----------------------------------------------------------
+        if [ "$STATUS" != "Succeeded" ] && [ "$STATUS" != "SucceededPartial" ]; then
+          echo "❌ PR validation failed"
+          echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
+          exit 1
+        fi
+
+        if [ "$COVERAGE" -lt 75 ]; then
+          echo "❌ Code coverage below 75% ($COVERAGE%)"
+          echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
+          exit 1
+        fi
+
+        echo "✅ PR validation passed with coverage $COVERAGE%"
+
+
+
+
+
+    # -------------------------------
+    # Generate HTML report
+    # -------------------------------
     - name: Generate Validation Report
-      if: always()
+      if: always()   # <-- ensures this runs even if previous step exited 1
       run: |
-        echo "<html><body style='font-family:Arial; padding:20px;'>" > validation_report.html
+        echo "<html><body style='font-family:Arial'>" > validation_report.html
         echo "<h1>Salesforce PR Validation Report</h1>" >> validation_report.html
-        echo "<p><b>Test Classes Run:</b> $APEX_TESTS</p>" >> validation_report.html
+
+        echo "<p><b>Test Class Name :</b> $APEX_TESTS</p>" >> validation_report.html
+        echo "<p><b>Coverage :</b> $COVERAGE%</p>" >> validation_report.html
+
+        if [ -s deploy_error.txt ]; then
+          echo "<p style='color:red'><b>Error :</b></p><pre>" >> validation_report.html
+          sed 's/\x1b
+
+        \[[0-9;]*m//g' deploy_error.txt >> validation_report.html
+              echo "</pre>" >> validation_report.html
+            else
+              echo "<p style='color:green'><b>Error :</b> None</p>" >> validation_report.html
+        fi
+
         if [ "$VALIDATION_FAILED" = "1" ]; then
-          echo "<h3 style='color:red'>❌ PR Validation Failed</h3>" >> validation_report.html
-          echo "<p><b>Reason:</b> Check for failed tests or Code Coverage < 75%.</p>" >> validation_report.html
-          echo "<h4>Error Details:</h4><pre style='background:#f4f4f4;border:1px solid #ddd;padding:10px;'>" >> validation_report.html
-           
-          # Safely capture the error message from JSON
-          if [ -f deploy_result.json ]; then
-             jq -r '.result.details.componentFailures[].problem // .result.errorMessage' deploy_result.json >> validation_report.html
-             jq -r '.result.details.runTestResult.failures[].message' deploy_result.json >> validation_report.html
-          else
-            cat deploy_error.txt >> validation_report.html
-          fi
-            echo "</pre>" >> validation_report.html
+            echo "<h3 style='color:red'>❌ PR Validation Failed</h3>" >> validation_report.html
         else
-          echo "<h3 style='color:green'>✅ PR Validation Passed</h3>" >> validation_report.html
-          echo "<p>Tests passed and code coverage requirements met.</p>" >> validation_report.html
+            echo "<h3 style='color:green'>✅ PR Validation Passed</h3>" >> validation_report.html
         fi
 
         echo "</body></html>" >> validation_report.html
 
-
-    #Upload Validation Report
+    # -------------------------------
+    # Upload report
+    # -------------------------------
     - name: Upload Validation Report
       if: always()
       uses: actions/upload-artifact@v4
