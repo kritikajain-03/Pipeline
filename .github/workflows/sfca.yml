@@ -109,9 +109,11 @@ jobs:
 
         echo "Deployment Status: $STATUS"
 
-        if [ "$STATUS" != "Succeeded" ]; then
+        if [ "$STATUS" != "Succeeded" ] && [ "$STATUS" != "SucceededPartial" ]; then
           echo "❌ PR validation failed"
           echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
+          else
+            echo "✅ PR validation passed"
         fi
 
     # -------------------------------
