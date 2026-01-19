@@ -105,7 +105,7 @@ jobs:
             # for more information on how this works.
 
             - name: 'Install sfdx-git-delta plugin'
-              run: sf plugins install sfdx-git-delta --force
+              run: echo 'y' | sfdx plugins:install sfdx-git-delta
 
 
 
