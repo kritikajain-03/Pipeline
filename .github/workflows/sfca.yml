@@ -10,10 +10,11 @@ on:
 jobs:
   validate-pr:
     runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' }}
 
     steps:
     # -------------------------------
-    # Checkout repository
+    # Checkout PR code
     # -------------------------------
     - name: Checkout repository
       uses: actions/checkout@v5
@@ -21,7 +22,7 @@ jobs:
         fetch-depth: 0
 
     # -------------------------------
-    # Setup Node.js
+    # Setup Node
     # -------------------------------
     - name: Setup Node
       uses: actions/setup-node@v4
@@ -29,19 +30,16 @@ jobs:
         node-version: '20'
 
     # -------------------------------
-    # Install system tools
+    # Install tools
     # -------------------------------
     - name: Install jq
       run: sudo apt-get update && sudo apt-get install -y jq
 
-    # -------------------------------
-    # Install Salesforce CLI
-    # -------------------------------
     - name: Install Salesforce CLI
       run: npm install -g @salesforce/cli@latest
 
     # -------------------------------
-    # Authenticate to Salesforce (JWT)
+    # Authenticate (JWT)
     # -------------------------------
     - name: Authenticate Org
       run: |
@@ -51,131 +49,91 @@ jobs:
           --jwt-key-file server.key \
           --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
           --instance-url ${{ vars.INSTANCE_URL }} \
-          --alias testOrg
+          --alias targetOrg
 
     # -------------------------------
-    # Extract Apex Tests from PR
+    # Extract tests from PR (your script)
     # -------------------------------
-    - name: Extract Apex Tests
+    - name: Extract Apex Tests from PR
       run: node .github/scripts/extract-tests.js
 
+    - name: Load test list
+      run: |
+        TESTS=$(cat testsToRun.txt)
+        echo "APEX_TESTS=$TESTS" >> $GITHUB_ENV
+
     # -------------------------------
-    # Initialize failure flags
+    # Initialize flags
     # -------------------------------
     - name: Initialize flags
       run: |
-        echo "TEST_FAILURES=0" >> $GITHUB_ENV
-        echo "COVERAGE_FAILURE=0" >> $GITHUB_ENV
+        echo "VALIDATION_FAILED=0" >> $GITHUB_ENV
 
     # -------------------------------
-    # Run Apex Tests
+    # Check-only deploy PR code + tests
     # -------------------------------
-    - name: Run Apex Tests
+    - name: Validate PR code with specified tests
+      if: ${{ env.APEX_TESTS != 'all' }}
       run: |
-        TESTS=$(cat testsToRun.txt)
-        if [ "$TESTS" = "all" ]; then
-          sf apex test run \
-            --target-org testOrg \
-            --code-coverage \
-            --result-format json \
-            --wait 30 > test_results.json 2> test_error.txt || true
-        else
-          sf apex test run \
-            --target-org testOrg \
-            --tests "$TESTS" \
-            --code-coverage \
-            --result-format json \
-            --wait 30 > test_results.json 2> test_error.txt || true
-        fi
+        sf project deploy start \
+          --target-org targetOrg \
+          --source-dir force-app \
+          --test-level RunSpecifiedTests \
+          --tests "$APEX_TESTS" \
+          --dry-run \
+          --wait 30 \
+          --json > deploy_result.json 2> deploy_error.txt || true
 
-
-    # -------------------------------
-    # Evaluate Test Results
-    # -------------------------------
-    - name: Evaluate Apex Test Results
+    - name: Validate PR code with all tests
+      if: ${{ env.APEX_TESTS == 'all' }}
       run: |
-        if [ ! -f test_results.json ]; then
-          echo "❌ No test results file generated"
-          echo "TEST_FAILURES=1" >> $GITHUB_ENV
-          exit 0
-        fi
+        sf project deploy start \
+          --target-org targetOrg \
+          --source-dir force-app \
+          --test-level RunLocalTests \
+          --dry-run \
+          --wait 30 \
+          --json > deploy_result.json 2> deploy_error.txt || true
 
-        TESTS_RAN=$(jq '.result.summary.testsRan // 0' test_results.json)
-        FAILING=$(jq '.result.summary.failing // 0' test_results.json)
-
-        echo "Tests Ran: $TESTS_RAN"
-        echo "Failing Tests: $FAILING"
-
-        if [ "$TESTS_RAN" -eq 0 ]; then
-          echo "❌ No Apex tests were executed"
-          echo "TEST_FAILURES=1" >> $GITHUB_ENV
-        fi
-
-        if [ "$FAILING" -gt 0 ]; then
-          echo "❌ Apex test failures detected"
-          echo "TEST_FAILURES=1" >> $GITHUB_ENV
-        fi
-
-     #delete cli error
-    - name: Detect CLI Errors
+    # -------------------------------
+    # Evaluate deployment result
+    # -------------------------------
+    - name: Evaluate Validation Result
       run: |
-        if [ -s test_error.txt ]; then
-          echo "❌ Salesforce CLI error detected"
-          cat test_error.txt
-          echo "TEST_FAILURES=1" >> $GITHUB_ENV
+        if [ -s deploy_error.txt ]; then
+          echo "❌ Deployment validation error"
+          echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
         fi
 
+        STATUS=$(jq -r '.result.status // "Failed"' deploy_result.json 2>/dev/null)
 
+        echo "Deployment Status: $STATUS"
 
-
-    # -------------------------------
-    # Enforce 75% Org-Wide Coverage
-    # -------------------------------
-    - name: Enforce 75% Org Coverage
-      run: |
-        if [ -f test_results.json ]; then
-          ORG_COVERAGE=$(jq -r '.result.summary.orgWideCoverage // 0' test_results.json)
-          ORG_COVERAGE=${ORG_COVERAGE%\%}
-          echo "Org Wide Coverage: $ORG_COVERAGE%"
-
-          if [ "$ORG_COVERAGE" -lt 75 ]; then
-            echo "COVERAGE_FAILURE=1" >> $GITHUB_ENV
-            echo "❌ Org wide coverage below 75%"
-          fi
-        else
-          echo "COVERAGE_FAILURE=1" >> $GITHUB_ENV
+        if [ "$STATUS" != "Succeeded" ]; then
+          echo "❌ PR validation failed"
+          echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
         fi
 
-
     # -------------------------------
-    # Generate Validation Report
+    # Generate HTML report
     # -------------------------------
     - name: Generate Validation Report
       if: always()
       run: |
-        echo "<html><body style='font-family: Arial'>" > validation_report.html
+        echo "<html><body style='font-family:Arial'>" > validation_report.html
         echo "<h1>Salesforce PR Validation Report</h1>" >> validation_report.html
 
-        TEST_CLASS=$(cat testsToRun.txt 2>/dev/null || echo "N/A")
-        COVERAGE="N/A"
+        echo "<p><b>Test Class Name :</b> $APEX_TESTS</p>" >> validation_report.html
 
-        if [ -f test_results.json ]; then
-          COVERAGE=$(jq -r '.result.summary.orgWideCoverage // "N/A"' test_results.json)
-        fi
-
-        echo "<h2>Apex Test Execution</h2>" >> validation_report.html
-        echo "<p><b>Test Class Name :</b> $TEST_CLASS</p>" >> validation_report.html
-        echo "<p><b>Org Coverage :</b> $COVERAGE</p>" >> validation_report.html
-
-        if [ -s test_error.txt ]; then
+        if [ -s deploy_error.txt ]; then
           echo "<p style='color:red'><b>Error :</b></p><pre>" >> validation_report.html
-          sed 's/\x1b\[[0-9;]*m//g' test_error.txt >> validation_report.html
+          sed 's/\x1b\[[0-9;]*m//g' deploy_error.txt >> validation_report.html
           echo "</pre>" >> validation_report.html
         else
           echo "<p style='color:green'><b>Error :</b> None</p>" >> validation_report.html
         fi
 
-        if [ "$TEST_FAILURES" = "1" ]; then
+        if [ "$VALIDATION_FAILED" = "1" ]; then
           echo "<h3 style='color:red'>❌ PR Validation Failed</h3>" >> validation_report.html
         else
           echo "<h3 style='color:green'>✅ PR Validation Passed</h3>" >> validation_report.html
@@ -183,26 +141,12 @@ jobs:
 
         echo "</body></html>" >> validation_report.html
 
-
-
-
     # -------------------------------
-    # Upload Validation Report
+    # Upload report
     # -------------------------------
     - name: Upload Validation Report
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: salesforce-validation-report
+        name: salesforce-pr-validation-report
         path: validation_report.html
-
-
-    # -------------------------------
-    # Final PR Gate (FAIL / PASS)
-    # -------------------------------
-    - name: PR Gate (show status)
-      run: |
-        echo "TEST_FAILURES=$TEST_FAILURES"
-        echo "COVERAGE_FAILURE=$COVERAGE_FAILURE"
-        echo "❌ PR validation failed (if flags are set, check report)"
-
