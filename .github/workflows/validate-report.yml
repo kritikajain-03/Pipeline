@@ -1,0 +1,157 @@
+name: PR Validation Report (Non Blocking)
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [ develop ]
+    paths:
+      - 'force-app/**'
+
+jobs:
+  validate-and-report:
+    runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' }}
+
+    steps:
+    # ---------------------------
+    # Setup
+    # ---------------------------
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Checkout source
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    # ---------------------------
+    # Read PR body (tests)
+    # ---------------------------
+    - name: Read PR Body
+      env:
+        PR_BODY: ${{ github.event.pull_request.body }}
+      run: |
+        echo "$PR_BODY" > pr_body.txt
+        node ./parsePR.js
+        TESTS=$(cat testsToRun.txt)
+        echo "APEX_TESTS=$TESTS" >> $GITHUB_ENV
+
+    # ---------------------------
+    # Install Salesforce CLI
+    # ---------------------------
+    - name: Install Salesforce CLI
+      run: npm install -g @salesforce/cli@latest
+
+    - name: Install sfdx-git-delta
+      run: echo 'y' | sfdx plugins:install sfdx-git-delta
+
+    - name: Install Java
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y default-jdk
+
+    - name: Install SFDX Scanner
+      run: sf plugins install @salesforce/sfdx-scanner --force
+
+    # ---------------------------
+    # Auth
+    # ---------------------------
+    - name: Auth to Integration Org
+      run: |
+        echo "${{ secrets.SFDX_INTEGRATION_URL }}" > sfdxurl.txt
+        sfdx auth:sfdxurl:store -f sfdxurl.txt -a integration
+
+    # ---------------------------
+    # Delta generation
+    # ---------------------------
+    - name: Generate delta
+      run: |
+        mkdir changed-sources
+        sfdx sgd:source:delta \
+          --to "HEAD" \
+          --from "HEAD^" \
+          --output changed-sources \
+          --generate-delta \
+          --source force-app
+
+    # ---------------------------
+    # Apex Scanner (NON FAILING)
+    # ---------------------------
+    - name: Run Apex Scan
+      continue-on-error: true
+      run: |
+        cd changed-sources
+        sf scanner run \
+          --format sarif \
+          --target './**/*.cls' \
+          --category "Design,Best Practices,Performance" \
+          --outfile apexScanResults.sarif
+        cd ..
+
+    - name: Upload SARIF
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: changed-sources/apexScanResults.sarif
+
+    # ---------------------------
+    # Run Apex Tests (NON BLOCKING)
+    # ---------------------------
+    - name: Run Apex Tests (Capture Result)
+      id: test_run
+      continue-on-error: true
+      run: |
+        mkdir report
+
+        if [ "${{ env.APEX_TESTS }}" != "all" ]; then
+          sf project deploy start \
+            --manifest "changed-sources/package/package.xml" \
+            --dry-run \
+            --test-level RunSpecifiedTests \
+            --tests "${{ env.APEX_TESTS }}" \
+            --json > report/test-result.json
+        else
+          sf project deploy start \
+            --manifest "changed-sources/package/package.xml" \
+            --dry-run \
+            --test-level RunLocalTests \
+            --json > report/test-result.json
+        fi
+
+    # ---------------------------
+    # Generate Human Readable Report
+    # ---------------------------
+    - name: Generate Validation Report
+      run: |
+        echo "Salesforce PR Validation Report" > report/summary.txt
+        echo "---------------------------------" >> report/summary.txt
+        echo "Tests Run: ${{ env.APEX_TESTS }}" >> report/summary.txt
+        echo "" >> report/summary.txt
+
+        jq '.result.details.runTestResult.failures // []' report/test-result.json \
+        > report/failures.json || echo "[]" > report/failures.json
+
+        FAILURES=$(jq length report/failures.json)
+
+        if [ "$FAILURES" -gt 0 ]; then
+          echo "❌ Test Failures Found" >> report/summary.txt
+          jq -r '.[] | "- \(.name): \(.message)"' report/failures.json >> report/summary.txt
+        else
+          echo "✅ No Test Failures" >> report/summary.txt
+        fi
+
+    # ---------------------------
+    # Upload Report Artifact
+    # ---------------------------
+    - name: Upload Validation Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: pr-validation-report
+        path: report/
+
+    # ---------------------------
+    # Force SUCCESS (important)
+    # ---------------------------
+    - name: Mark job success
+      run: echo "Report generated successfully"
