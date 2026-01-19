@@ -62,24 +62,11 @@ jobs:
 
       - name: Parse test results into HTML report
         run: |
-          node -e "
-          const fs=require('fs');
-          const results=JSON.parse(fs.readFileSync('testResults.json','utf8'));
-          let html='<html><head><title>Test Report</title></head><body><h1>Salesforce Test Validation Report</h1><ul>';
-          if(results.result && results.result.tests){
-            results.result.tests.forEach(t=>{
-              html+=`<li><strong>${t.name}</strong>: ${t.outcome}${t.message?'<br/>Error: '+t.message:''}</li>`;
-            });
-          }
-          html+='</ul></body></html>';
-          fs.writeFileSync('report.html',html);
-          "
+          node ./scripts/parseTestResults.js testResults.json report.html
 
-
-      - name: Upload raw test results
+      - name: Upload report artifact
         uses: actions/upload-artifact@v4
         with:
           name: Test-Validation-Report
-          path: testResults.json
-
+          path: report.html
 
