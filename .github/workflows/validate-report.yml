@@ -17,10 +17,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0 
+          fetch-depth: 0
 
       # -------------------------------
-      # Setup Node and Salesforce CLI
+      # Setup Salesforce CLI
       # -------------------------------
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli@latest
@@ -29,17 +29,40 @@ jobs:
         run: sf plugins install code-analyzer@latest
 
       # -------------------------------
-      # Run Salesforce Code Analyzer (entire force-app)
+      # Run Salesforce Code Analyzer
       # -------------------------------
-      - name: Run Salesforce Code Analyzer (force-app)
+      - name: Run Salesforce Code Analyzer
         uses: forcedotcom/run-code-analyzer@v2
         with:
           run-arguments: >
             --workspace .
             --target force-app/main/default
             --view detail
-            --fail-on-violations
             --output-file sfca_results.html
             --output-file sfca_results.json
           results-artifact-name: salesforce-code-analyzer-results
           github-token: ${{ github.token }}
+
+      # -------------------------------
+      # Parse results & fail if violations exist
+      # -------------------------------
+      - name: Evaluate Code Analyzer Results
+        run: |
+          if [ ! -f sfca_results.json ]; then
+            echo "❌ Results file not found"
+            exit 1
+          fi
+
+          VIOLATION_COUNT=$(jq '.runs[].results | length' sfca_results.json)
+
+          echo "Violations found: $VIOLATION_COUNT"
+
+          echo "### Salesforce Code Analyzer Report" >> $GITHUB_STEP_SUMMARY
+          echo "- Violations found: **$VIOLATION_COUNT**" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$VIOLATION_COUNT" -gt 0 ]; then
+            echo "❌ Salesforce Code Analyzer failed"
+            exit 1
+          else
+            echo "✅ No violations found"
+          fi
