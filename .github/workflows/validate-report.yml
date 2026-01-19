@@ -66,3 +66,27 @@ jobs:
           else
             echo "✅ No violations found"
           fi
+
+      # comment on ui 
+      - name: Comment violation count on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            const data = JSON.parse(fs.readFileSync('sfca_results.json'));
+            const count = (data.runs || [])
+              .flatMap(r => r.results || [])
+              .length;
+
+            const body = count > 0
+              ? `❌ **Salesforce Code Analyzer Failed**\n\n**Violations found:** ${count}`
+              : `✅ **Salesforce Code Analyzer Passed**\n\nNo violations found`;
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
