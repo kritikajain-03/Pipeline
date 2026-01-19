@@ -82,8 +82,10 @@ jobs:
           --tests "$APEX_TESTS" \
           --dry-run \
           --wait 30 \
-          --json > deploy_result.json 2> deploy_error.txt || true
+          --json > deploy_result.json 2> deploy_error.txt
 
+
+    # Validate PR code with all tests
     - name: Validate PR code with all tests
       if: ${{ env.APEX_TESTS == 'all' }}
       run: |
@@ -103,25 +105,28 @@ jobs:
         if [ -s deploy_error.txt ]; then
           echo "❌ Deployment validation error"
           echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
+          exit 1
         fi
 
         STATUS=$(jq -r '.result.status // "Failed"' deploy_result.json 2>/dev/null)
-
         echo "Deployment Status: $STATUS"
 
         if [ "$STATUS" != "Succeeded" ] && [ "$STATUS" != "SucceededPartial" ]; then
           echo "❌ PR validation failed"
           echo "VALIDATION_FAILED=1" >> $GITHUB_ENV
-          else
-            echo "✅ PR validation passed"
+          exit 1
+        else
+          echo "✅ PR validation passed"
         fi
+
+
 
 
     # -------------------------------
     # Generate HTML report
     # -------------------------------
     - name: Generate Validation Report
-      if: always()
+      if: always()   # <-- ensures this runs even if previous step exited 1
       run: |
         echo "<html><body style='font-family:Arial'>" > validation_report.html
         echo "<h1>Salesforce PR Validation Report</h1>" >> validation_report.html
@@ -130,16 +135,18 @@ jobs:
 
         if [ -s deploy_error.txt ]; then
           echo "<p style='color:red'><b>Error :</b></p><pre>" >> validation_report.html
-          sed 's/\x1b\[[0-9;]*m//g' deploy_error.txt >> validation_report.html
-          echo "</pre>" >> validation_report.html
-        else
-          echo "<p style='color:green'><b>Error :</b> None</p>" >> validation_report.html
+          sed 's/\x1b
+
+        \[[0-9;]*m//g' deploy_error.txt >> validation_report.html
+              echo "</pre>" >> validation_report.html
+            else
+              echo "<p style='color:green'><b>Error :</b> None</p>" >> validation_report.html
         fi
 
         if [ "$VALIDATION_FAILED" = "1" ]; then
-          echo "<h3 style='color:red'>❌ PR Validation Failed</h3>" >> validation_report.html
+            echo "<h3 style='color:red'>❌ PR Validation Failed</h3>" >> validation_report.html
         else
-          echo "<h3 style='color:green'>✅ PR Validation Passed</h3>" >> validation_report.html
+            echo "<h3 style='color:green'>✅ PR Validation Passed</h3>" >> validation_report.html
         fi
 
         echo "</body></html>" >> validation_report.html
