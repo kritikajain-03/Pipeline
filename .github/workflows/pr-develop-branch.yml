@@ -105,7 +105,8 @@ jobs:
             # for more information on how this works.
 
             - name: 'Install sfdx-git-delta plugin'
-              run: sfdx plugins:install sfdx-git-delta --force
+              run: sf plugins install sfdx-git-delta --force
+
 
 
             # Install java as it is required for the next step
@@ -116,7 +117,8 @@ jobs:
 
             # Install SFDX scanner
             - name: 'Installing SFDX scanner'
-              run: sfdx plugins:install @salesforce/sfdx-scanner
+              run: sf plugins install @salesforce/sfdx-scanner --force
+
 
             # Prior to setting up this workflow, you have to create a Github Secret
             # that contains the sfdx url of the integration/qa org.
@@ -158,7 +160,9 @@ jobs:
             - name: 'Scan code'
               run: |
                   cd changed-sources
-                  sfdx scanner:run --format sarif --target './**/*.cls' --category "Design,Best Practices,Performance" --outfile 'apexScanResults.sarif'  
+                  sf scanner run --format sarif --target './**/*.cls' \
+                  --category "Design,Best Practices,Performance" \
+                  --outfile 'apexScanResults.sarif'
                   cd ..
 
             # Now we upload the .sarif file as explained in the previous step
