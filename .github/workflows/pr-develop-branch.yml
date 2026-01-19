@@ -91,7 +91,8 @@ jobs:
             - name: List files to deploy
               run: |
                 echo "Files in changed-sources:"
-                ls -la changed-sources/
+                find changed-sources/ -type f
+
                             
                            
           #scan code
@@ -129,3 +130,13 @@ jobs:
             - name: 'Deploy destructive changes (if any)'
               run: |
                   sf project deploy start --metadata-dir "changed-sources/destructiveChanges" --dry-run --ignore-warnings
+
+            - name: 'Deploy destructive changes (if any)'
+              run: |
+                if [ -d "changed-sources/destructiveChanges" ] && [ "$(ls -A changed-sources/destructiveChanges)" ]; then
+                    echo "Destructive changes found, deploying..."
+                    sf project deploy start --metadata-dir "changed-sources/destructiveChanges" --dry-run --ignore-warnings
+                else
+                    echo "No destructive changes found, skipping deploy."
+                fi
+      
