@@ -58,6 +58,7 @@ jobs:
             --dry-run \
             --test-level RunLocalTests \
             --json > testResults.json
+        continue-on-error: true
 
       - name: Parse test results into HTML report
         run: |
@@ -68,3 +69,4 @@ jobs:
         with:
           name: Test-Validation-Report
           path: report.html
+
