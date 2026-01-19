@@ -1,106 +1,44 @@
-name: PR Validation Report (Non-blocking)
+name: Salesforce Code Analyzer Workflow
 
 on:
   pull_request:
-    branches: [develop]
-    types: [opened, synchronize]
     paths:
-      - 'force-app/**'
+      - 'force-app/main/default/**'
+      - 'sfca-config.yml'
 
 jobs:
-  validation-report:
+  sfca:
     runs-on: ubuntu-latest
-    if: ${{ github.actor != 'dependabot[bot]' }}
 
     steps:
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      # -------------------------------
+      # Checkout repository
+      # -------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v5
         with:
-          node-version: '20'
+          fetch-depth: 0 
 
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
+      # -------------------------------
+      # Setup Node and Salesforce CLI
+      # -------------------------------
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli@latest
 
-      - name: Install sfdx-git-delta
-        run: echo 'y' | sfdx plugins:install sfdx-git-delta
-
-      - name: Authenticate Org
-        run: |
-          echo "${{ secrets.SFDX_INTEGRATION_URL }}" > sfdxurl.txt
-          sfdx auth:sfdxurl:store -f sfdxurl.txt -s -a integration
-
-      - name: Generate delta
-        run: |
-          mkdir changed-sources
-          sfdx sgd:source:delta \
-            --to "HEAD" \
-            --from "HEAD^" \
-            --output changed-sources \
-            --generate-delta \
-            --source force-app/
+      - name: Install Salesforce Code Analyzer Plugin
+        run: sf plugins install code-analyzer@latest
 
       # -------------------------------
-      # RUN TESTS (NON BLOCKING)
+      # Run Salesforce Code Analyzer (entire force-app)
       # -------------------------------
-      - name: Validate Apex Tests (Report Mode)
-        continue-on-error: true
-        run: |
-          sf project deploy start \
-            --manifest changed-sources/package/package.xml \
-            --dry-run \
-            --test-level RunLocalTests \
-            --json > test-result.json
-
-      # -------------------------------
-      # PARSE RESULT
-      # -------------------------------
-      - name: Generate Validation Report
-        run: |
-          node <<'EOF'
-          const fs = require('fs');
-
-          const raw = fs.readFileSync('test-result.json', 'utf8');
-          const data = JSON.parse(raw);
-
-          let report = '## Salesforce PR Validation Report\n\n';
-
-          if (data.status === 0) {
-            report += '✅ **All tests passed successfully**\n';
-          } else {
-            report += '❌ **Test Failures Detected**\n\n';
-
-            const failures =
-              data?.result?.details?.runTestResult?.failures || [];
-
-            if (failures.length === 0) {
-              report += '_Tests failed but no failure details were returned._\n';
-            }
-
-            failures.forEach(f => {
-              report += `### ❌ ${f.name}.${f.methodName}\n`;
-              report += `**Message:** ${f.message}\n\n`;
-              report += `**Stack Trace:**\n\`\`\`\n${f.stackTrace}\n\`\`\`\n\n`;
-            });
-          }
-
-          fs.writeFileSync('PR_VALIDATION_REPORT.md', report);
-          console.log('Validation report generated');
-          EOF
-
-
-      # -------------------------------
-      # PUBLISH REPORT
-      # -------------------------------
-      - name: Upload Report Artifact
-        uses: actions/upload-artifact@v4
+      - name: Run Salesforce Code Analyzer (force-app)
+        uses: forcedotcom/run-code-analyzer@v2
         with:
-          name: PR-Validation-Report
-          path: PR_VALIDATION_REPORT.md
-
-      - name: Publish Report to PR Summary
-        run: cat PR_VALIDATION_REPORT.md >> $GITHUB_STEP_SUMMARY
+          run-arguments: >
+            --workspace .
+            --target force-app/main/default
+            --view detail
+            --output-file sfca_results.html
+            --output-file sfca_results.json
+          results-artifact-name: salesforce-code-analyzer-results
+          github-token: ${{ github.token }}
