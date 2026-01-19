@@ -1,7 +1,5 @@
-# Unique name for this workflow
-name: Validate and Generate Report
+name: Generate Test Report
 
-# Trigger: run on PRs to develop branch
 on:
   pull_request:
     types: [opened, synchronize]
@@ -10,63 +8,50 @@ on:
       - 'force-app/**'
 
 jobs:
-  validate-and-report:
+  generate-report:
     runs-on: ubuntu-latest
-    if: ${{ github.actor != 'dependabot[bot]' }}
     steps:
+      - name: 'Checkout source code'
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Checkout source code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli@latest
 
-      - name: Install sfdx-git-delta plugin
-        run: echo 'y' | sfdx plugins:install sfdx-git-delta
-
-      - name: Install Java
-        run: |
-          sudo apt-get update
-          sudo apt install default-jdk
-
-      - name: Install SFDX scanner
-        run: sf plugins install @salesforce/sfdx-scanner --force
-
-      - name: Populate auth file with SFDX_URL secret of integration org
-        shell: bash
+      - name: 'Authenticate to Integration Org'
         run: |
           echo ${{ secrets.SFDX_INTEGRATION_URL}} > ./SFDX_INTEGRATION_URL.txt
+          sf org login sfdx-url -f ./SFDX_INTEGRATION_URL.txt -a integration -s
 
-      - name: Authenticate to Integration Org
-        run: sfdx auth:sfdxurl:store -f ./SFDX_INTEGRATION_URL.txt -s -a integration
-
-      - name: Create delta packages
-        run: |
-          mkdir changed-sources
-          sfdx sgd:source:delta --to "HEAD" --from "HEAD^" --output changed-sources/ --generate-delta --source force-app/
-
-      - name: Run tests and capture JSON
-        run: |
-          sf project deploy start \
-            --manifest "changed-sources/package/package.xml" \
-            --dry-run \
-            --test-level RunLocalTests \
-            --json > testResults.json
+      # We run the tests but output the results to a JUnit file
+      # continue-on-error is TRUE so the report is always uploaded
+      - name: 'Run Tests and Generate Report'
         continue-on-error: true
-
-      - name: Parse test results into HTML report
         run: |
-          node ./scripts/parseTestResults.js testResults.json report.html
+          sf project deploy validate \
+            --source-dir force-app \
+            --test-level RunLocalTests \
+            --result-format junit \
+            --output-dir test-results \
+            --target-org integration
 
-      - name: Upload report artifact
+      # This creates a visual tab in GitHub Actions with the error details
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: 'test-results/**/*.xml'
+
+      # This stores the physical file in the 'Artifacts' section of the run
+      - name: Upload Test Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Test-Validation-Report
-          path: report.html
-
+          name: apex-test-report
+          path: test-results/
