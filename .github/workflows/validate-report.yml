@@ -38,6 +38,7 @@ jobs:
             --workspace .
             --target force-app/main/default
             --view detail
+            --fail-on-violations
             --output-file sfca_results.html
             --output-file sfca_results.json
           results-artifact-name: salesforce-code-analyzer-results
