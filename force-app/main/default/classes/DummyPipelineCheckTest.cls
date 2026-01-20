@@ -8,8 +8,7 @@ public class DummyPipelineCheckTest {
     }
 
     
-    @IsTest
-
+    @IsTest   
 
     String e;
     static void testSubtractMethod() {
