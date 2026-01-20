@@ -16,9 +16,11 @@ jobs:
       # -------------------------------
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       # -------------------------------
-      # Setup Node and Salesforce CLI
+      # Install Salesforce CLI & Analyzer
       # -------------------------------
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli@latest
@@ -27,14 +29,17 @@ jobs:
         run: sf plugins install code-analyzer@latest
 
       # -------------------------------
-      # Run Salesforce Code Analyzer (Full Scan)
+      # Run Salesforce Code Analyzer
       # -------------------------------
-      - name: Run Salesforce Code Analyzer
+      - name: Run Salesforce Code Analyzer (full force-app)
         uses: forcedotcom/run-code-analyzer@v2
         with:
-          # Scans the entire force-app directory instead of specific files
-          run-arguments: --workspace . --target ./force-app --view detail --output-file sfca_results.html
+          run-arguments: >
+            --workspace .
+            --target force-app/main/default
+            --view detail
+            --output-file sfca_results.html
+            --output-file sfca_results.json
+            --fail-on-violations
           results-artifact-name: salesforce-code-analyzer-results
           github-token: ${{ github.token }}
-          # This ensures the job fails (X) if any violations are found
-          severity-threshold: 3
