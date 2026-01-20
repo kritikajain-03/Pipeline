@@ -50,7 +50,7 @@ jobs:
             exit 1
           fi
 
-          VIOLATION_COUNT=$(jq '[.runs[].results // []] | flatten | length' sfca_results.json)
+          VIOLATION_COUNT=$(jq '[.runs[] | (.results // []) // []] | flatten | length' sfca_results.json)
 
           echo "Violations found: $VIOLATION_COUNT"
 
@@ -60,6 +60,7 @@ jobs:
           fi
 
           echo "✅ No violations found"
+
 
       # -------------------------------
       # Upload results
