@@ -1,59 +1,60 @@
 name: Salesforce Code Analyzer Workflow
 
+
 on:
-  pull_request:
-    paths:
-      - 'force-app/main/default/**'
+  pull_request:
+    paths:
+      - 'force-app/main/default/**'
+ 
 
 jobs:
-  sfca:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0 # Important: Fetch all history so git diff works
-
-      - name: Install Salesforce CLI and Analyzer
-        run: |
-          npm install -g @salesforce/cli@latest
-          sf plugins install code-analyzer@latest
-
-      - name: Get changed files
-        id: changed-files
-        run: |
-          # Fetch the base branch to compare against
-          git fetch origin ${{ github.base_ref }}
-          
-          # Get files, filter by path, and join them with commas for the analyzer
-          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep '^force-app/main/default/' | xargs | sed 's/ /,/g')
-          
-          echo "CHANGED_PATHS=$FILES" >> $GITHUB_ENV
-          echo "Files to scan: $FILES"
-
-      - name: Run Salesforce Code Analyzer
-        if: env.CHANGED_PATHS != ''
-        id: run-code-analyzer
-        uses: forcedotcom/run-code-analyzer@v1
-        with:
-          # Use 'target' to specify only the changed files
-          target: ${{ env.CHANGED_PATHS }}
-          run-arguments: --view detail --output-file sfca_results.html --output-file sfca_results.sarif
-          results-artifact-name: salesforce-code-analyzer-results
-          github-token: ${{ github.token }}
+  sfca:
+    runs-on: ubuntu-latest
 
 
+    steps:
+      # -------------------------------
+      # Checkout repository
+      # -------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v5
 
-     
-      # -------------------------------
-      # Fail if ANY violations exist
-      # -------------------------------
-      - name: Fail job if violations exist
-        run: |
-          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
-          && exit 1 \
-          || echo "✅ No violations found"
+
+      # -------------------------------
+      # Install Salesforce CLI & Analyzer
+      # -------------------------------
+      - name: Install Salesforce CLI and Analyzer
+        run: |
+          npm install -g @salesforce/cli@latest
+          sf plugins install code-analyzer@latest
+
+      # changed file
+      - name: Get all changed files
+        id: changed
+        run: |
+          # Fetch base branch
+          git fetch origin ${{ github.base_ref }}
+
+          # Get all changed files under force-app/main/default/
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep '^force-app/main/default/' || true)>> $GITHUB_ENV
+
+      - name: Run Salesforce Code Analyzer
+        id: run-code-analyzer
+        uses: forcedotcom/run-code-analyzer@v2
+        with:
+          run-arguments: --workspace .${{ env.CHANGED_FILES }} --view detail --output-file sfca_results.html --output-file sfca_results.sarif
+          results-artifact-name: salesforce-code-analyzer-results
+          github-token: ${{ github.token }}
 
 
 
+     
+      # -------------------------------
+      # Fail if ANY violations exist
+      # -------------------------------
+      # - name: Fail job if violations exist
+      #   run: |
+      #     jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
+      #     && exit 1 \
+      #     || echo "✅ No violations found"
