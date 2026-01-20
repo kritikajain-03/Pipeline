@@ -58,5 +58,15 @@ jobs:
             --target ${{ env.CHANGED_FILES }}
             --view detail
             --output-file sfca_results.html
+            --output-file sfca_results.sarif
           results-artifact-name: salesforce-code-analyzer-results
           github-token: ${{ github.token }}
+
+      # -------------------------------
+      # Fail if ANY violations exist
+      # -------------------------------
+       - name: Fail job if violations exist
+         run: |
+           jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
+           && exit 1 \
+           || echo "✅ No violations found"
