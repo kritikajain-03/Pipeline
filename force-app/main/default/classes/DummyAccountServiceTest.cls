@@ -11,8 +11,7 @@ public class DummyAccountServiceTest {
         // Fetch account using service method
         Account fetchedAcc = DummyAccountService.getAccountById(acc.Id);
 
-        Test.stopTest();
-
+        Test.stopTest();ewfefr
 
  n jk
         
