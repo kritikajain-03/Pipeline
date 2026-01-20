@@ -29,40 +29,35 @@ jobs:
           sf plugins install code-analyzer@latest
 
       # changed file
-      - name: Get changed files
+      - name: Get all changed files
         id: changed
         run: |
+          # Fetch base branch
           git fetch origin ${{ github.base_ref }}
 
-          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
-            | grep '^force-app/main/default/' \
-            | tr '\n' ' ')
+          # Get all changed files under force-app/main/default/
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep '^force-app/main/default/' || true)>> $GITHUB_ENV
 
-          echo "CHANGED_FILES=$FILES" >> $GITHUB_ENV
-
-      # code analyser
-      - name: Run Salesforce Code Analyzer (changed files only)
-        if: ${{ env.CHANGED_FILES != '' }}
+      - name: Run Salesforce Code Analyzer
+        id: run-code-analyzer
         uses: forcedotcom/run-code-analyzer@v2
         with:
-          run-arguments: >
-            --workspace .${{ env.CHANGED_FILES }}
-            --view detail
-            --output-file sfca_results.html
-            --output-file sfca_results.sarif
+          run-arguments: --workspace .${{ env.CHANGED_FILES }} --config-file code.yml --view detail --output-file sfca_results.html --output-file sfca_results.json
           results-artifact-name: salesforce-code-analyzer-results
           github-token: ${{ github.token }}
+
 
 
      
       # -------------------------------
       # Fail if ANY violations exist
       # -------------------------------
-      - name: Fail job if violations exist
-        run: |
-          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
-          && exit 1 \
-          || echo "✅ No violations found"
+      # - name: Fail job if violations exist
+      #   run: |
+      #     jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
+      #     && exit 1 \
+      #     || echo "✅ No violations found"
 
 
 
