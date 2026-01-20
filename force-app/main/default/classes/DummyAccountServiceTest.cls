@@ -3,10 +3,8 @@ public class DummyAccountServiceTest {
 
     @IsTest
     static void testCreateAndGetAccount() {
-
         // Start test context
         Test.startTest();
-
         // Call method to create account
         Account acc = DummyAccountService.createAccount('Test Account');
 
