@@ -24,21 +24,18 @@ jobs:
       # automatically if any violation (Severity 1, 2, or 3) is found.
       # -----------------------------------------------------------
       - name: Run Salesforce Code Analyzer
-        run: |
-          sf code-analyzer run \
-            --target force-app/main/default \
-            --severity-threshold 1 \
-            --view detail \
-            --output-file sfca_results.html
+        uses: forcedotcom/run-code-analyzer@v2
+        with:
+          # This automatically fails the build if violations are found
+          run-command: 'run'
+          target: 'force-app/main/default'
+          # Tell it to fail if there are any violations of severity 1, 2, or 3
+          severity-threshold: 3 
+          outfile: 'results.html'
 
-      # This only runs if the step above passes (no violations)
-      - name: Success Message
-        run: echo "✅ No violations found"
-
-      # This ensures results are uploaded even if the scan fails
-      - name: Upload SFCA Results
-        if: always()
+      - name: Upload results
+        if: always() # Upload even if the scan failed
         uses: actions/upload-artifact@v4
         with:
           name: salesforce-code-analyzer-results
-          path: sfca_results.html
+          path: results.html
