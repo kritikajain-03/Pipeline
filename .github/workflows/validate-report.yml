@@ -14,13 +14,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Install Salesforce CLI and Analyzer
+      - name: Install Salesforce CLI and Code Analyzer
         run: |
           npm install -g @salesforce/cli@latest
           sf plugins install code-analyzer@latest
 
       # -------------------------------
-      # Run Salesforce Code Analyzer
+      # Run Salesforce Code Analyzer (HTML)
       # -------------------------------
       - name: Run Salesforce Code Analyzer
         run: |
@@ -28,23 +28,28 @@ jobs:
             --workspace . \
             --target force-app/main/default \
             --view detail \
-            --output-file sfca_results.sarif
+            --format html \
+            --outfile sfca_results.html
 
       # -------------------------------
-      # Exit 1 if ANY violation exists
+      # Fail job if violations exist
+      # (HTML does NOT support jq parsing)
       # -------------------------------
       - name: Fail job if violations exist
         run: |
-          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
-          && exit 1 \
-          || echo "✅ No violations found"
+          if grep -q "Violation" sfca_results.html; then
+            echo "❌ Violations found"
+            exit 1
+          else
+            echo "✅ No violations found"
+          fi
 
       # -------------------------------
-      # Upload results
+      # Upload HTML report
       # -------------------------------
-      - name: Upload results
+      - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: salesforce-code-analyzer-results
-          path: sfca_results.sarif
+          name: salesforce-code-analyzer-html-report
+          path: sfca_results.html
