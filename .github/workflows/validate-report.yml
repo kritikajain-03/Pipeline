@@ -29,26 +29,30 @@ jobs:
           sf plugins install code-analyzer@latest
 
       # changed file
-      - name: Get all changed files
+      - name: Get changed files
         id: changed
         run: |
-          # Fetch base branch
           git fetch origin ${{ github.base_ref }}
 
-          # Get all changed files under force-app/main/default/
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
-            | grep '^force-app/main/default/' || true)>> $GITHUB_ENV
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep '^force-app/main/default/' \
+            | tr '\n' ' ')
 
+          echo "CHANGED_FILES=$FILES" >> $GITHUB_ENV
 
-
-      - name: Run Salesforce Code 
-        if: ${{ env.CHANGED_FILES != '' }}
-        id: run-code-analyzer
+      # code analyser
+      - name: Run Salesforce Code Analyzer (changed files only)
         uses: forcedotcom/run-code-analyzer@v2
         with:
-            run-arguments: --workspace .${{ env.CHANGED_FILES }} --view detail --output-file sfca_results.html --output-file sfca_results.sarif
-            results-artifact-name: salesforce-code-analyzer-results
-            github-token: ${{ github.token }}
+          run-arguments: >
+            --workspace .
+            --target ${{ env.CHANGED_FILES }}
+            --view detail
+            --output-file sfca_results.html
+            --output-file sfca_results.sarif
+          results-artifact-name: salesforce-code-analyzer-results
+          github-token: ${{ github.token }}
+
      
       # -------------------------------
       # Fail if ANY violations exist
