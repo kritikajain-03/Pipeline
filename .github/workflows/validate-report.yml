@@ -19,23 +19,32 @@ jobs:
           npm install -g @salesforce/cli@latest
           sf plugins install code-analyzer@latest
 
-      # -----------------------------------------------------------
-      # Run Analyzer: --severity-threshold 1 makes the command fail 
-      # automatically if any violation (Severity 1, 2, or 3) is found.
-      # -----------------------------------------------------------
+      # -------------------------------
+      # Run Salesforce Code Analyzer
+      # -------------------------------
       - name: Run Salesforce Code Analyzer
-        uses: forcedotcom/run-code-analyzer@v2
-        with:
-          # This automatically fails the build if violations are found
-          run-command: 'run'
-          target: 'force-app/main/default'
-          # Tell it to fail if there are any violations of severity 1, 2, or 3
-          severity-threshold: 3 
-          outfile: 'results.html'
+        run: |
+          sf code-analyzer run \
+            --workspace . \
+            --target force-app/main/default \
+            --view detail \
+            --output-file sfca_results.sarif
 
+      # -------------------------------
+      # Exit 1 if ANY violation exists
+      # -------------------------------
+      - name: Fail job if violations exist
+        run: |
+          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
+          && exit 1 \
+          || echo "✅ No violations found"
+
+      # -------------------------------
+      # Upload results
+      # -------------------------------
       - name: Upload results
-        if: always() # Upload even if the scan failed
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: salesforce-code-analyzer-results
-          path: results.html
+          path: sfca_results.sarif
