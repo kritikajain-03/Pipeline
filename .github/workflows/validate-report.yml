@@ -1,60 +1,62 @@
 name: Salesforce Code Analyzer Workflow
 
-
 on:
-  pull_request:
-    paths:
-      - 'force-app/main/default/**'
- 
+  pull_request:
+    paths:
+      - 'force-app/main/default/**'
 
 jobs:
-  sfca:
-    runs-on: ubuntu-latest
+  sfca:
+    runs-on: ubuntu-latest
 
+    steps:
+      # -------------------------------
+      # Checkout repository
+      # -------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-    steps:
-      # -------------------------------
-      # Checkout repository
-      # -------------------------------
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      # -------------------------------
+      # Install Salesforce CLI & Code Analyzer
+      # -------------------------------
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli@latest
 
+      - name: Install Salesforce Code Analyzer Plugin
+        run: sf plugins install code-analyzer@latest
 
-      # -------------------------------
-      # Install Salesforce CLI & Analyzer
-      # -------------------------------
-      - name: Install Salesforce CLI and Analyzer
-        run: |
-          npm install -g @salesforce/cli@latest
-          sf plugins install code-analyzer@latest
+      # -------------------------------
+      # Get changed files from PR
+      # -------------------------------
+      - name: Get changed files
+        run: |
+          # Fetch base branch
+          git fetch origin ${{ github.base_ref }}
 
-      # changed file
-      - name: Get all changed files
-        id: changed
-        run: |
-          # Fetch base branch
-          git fetch origin ${{ github.base_ref }}
+          # Get changed files under force-app/main/default
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep '^force-app/main/default/' || true)
 
-          # Get all changed files under force-app/main/default/
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
-            | grep '^force-app/main/default/' || true)>> $GITHUB_ENV
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
 
-      - name: Run Salesforce Code Analyzer
-        id: run-code-analyzer
-        uses: forcedotcom/run-code-analyzer@v2
-        with:
-          run-arguments: --workspace .${{ env.CHANGED_FILES }} --view detail --output-file sfca_results.html --output-file sfca_results.sarif
-          results-artifact-name: salesforce-code-analyzer-results
-          github-token: ${{ github.token }}
+          # Convert to space-separated list
+          CHANGED_FILES=$(echo "$CHANGED_FILES" | tr '\n' ' ' | sed 's/ $//')
 
+          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
 
-
-     
-      # -------------------------------
-      # Fail if ANY violations exist
-      # -------------------------------
-      # - name: Fail job if violations exist
-      #   run: |
-      #     jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
-      #     && exit 1 \
-      #     || echo "✅ No violations found"
+      # -------------------------------
+      # Run Salesforce Code Analyzer
+      # -------------------------------
+      - name: Run Salesforce Code Analyzer (changed files only)
+        if: ${{ env.CHANGED_FILES != '' }}
+        uses: forcedotcom/run-code-analyzer@v2
+        with:
+          run-arguments: >
+            --target ${{ env.CHANGED_FILES }}
+            --view detail
+            --output-file sfca_results.html
+          results-artifact-name: salesforce-code-analyzer-results
+          github-token: ${{ github.token }}
