@@ -1,14 +1,17 @@
 name: Salesforce Code Analyzer Workflow
 
+
 on:
   pull_request:
     paths:
       - 'force-app/main/default/**'
       - 'code-analyzer.yml'
 
+
 jobs:
   sfca:
     runs-on: ubuntu-latest
+
 
     steps:
       # -------------------------------
@@ -16,6 +19,7 @@ jobs:
       # -------------------------------
       - name: Checkout repository
         uses: actions/checkout@v5
+
 
       # -------------------------------
       # Install Salesforce CLI & Analyzer
@@ -25,27 +29,29 @@ jobs:
           npm install -g @salesforce/cli@latest
           sf plugins install code-analyzer@latest
 
+
       # -------------------------------
       # Run Salesforce Code Analyzer
       # -------------------------------
       - name: Run Salesforce Code Analyzer
-        uses: forcedotcom/run-code-analyzer@v2
-        with:
-          run-arguments: >
+        run: |
+          sf code-analyzer run \
+            --workspace . \
             --target force-app/main/default \
-            --view detail
+            --view detail \
+            --output-file sfca_results.sarif \
             --output-file sfca_results.html
-          results-artifact-name: salesforce-code-analyzer-results
-          github-token: ${{ github.token }}     
+
 
       # -------------------------------
       # Fail if ANY violations exist
       # -------------------------------
       - name: Fail job if violations exist
         run: |
-          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.html \
+          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
           && exit 1 \
           || echo "✅ No violations found"
+
 
       # -------------------------------
       # Upload results (HTML + SARIF)
@@ -56,4 +62,7 @@ jobs:
         with:
           name: salesforce-code-analyzer-results
           path: |
+            sfca_results.sarif
             sfca_results.html
+
+
