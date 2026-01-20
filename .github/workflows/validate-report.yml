@@ -20,7 +20,7 @@ jobs:
           sf plugins install code-analyzer@latest
 
       # -------------------------------
-      # Run Salesforce Code Analyzer (HTML)
+      # Run Salesforce Code Analyzer (HTML only)
       # -------------------------------
       - name: Run Salesforce Code Analyzer
         run: |
@@ -32,12 +32,17 @@ jobs:
             --outfile sfca_results.html
 
       # -------------------------------
-      # Fail job if violations exist
-      # (HTML does NOT support jq parsing)
+      # Fail job if violations exist (HTML-based)
       # -------------------------------
       - name: Fail job if violations exist
         run: |
-          if grep -q "Violation" sfca_results.html; then
+          if [ ! -f sfca_results.html ]; then
+            echo "❌ HTML report not found"
+            exit 1
+          fi
+
+          # Basic violation detection from HTML
+          if grep -qi "violation" sfca_results.html; then
             echo "❌ Violations found"
             exit 1
           else
