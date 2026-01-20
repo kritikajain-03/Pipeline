@@ -28,13 +28,12 @@ jobs:
       # -------------------------------
       # Run Salesforce Code Analyzer
       # -------------------------------
-      - name: Run Salesforce Code Analyzer (changed files only)
+      - name: Run Salesforce Code Analyzer
         uses: forcedotcom/run-code-analyzer@v2
         with:
           run-arguments: >
             --target force-app/main/default \
             --view detail
-            --output-file sfca_results.sarif \
             --output-file sfca_results.html
           results-artifact-name: salesforce-code-analyzer-results
           github-token: ${{ github.token }}     
@@ -44,7 +43,7 @@ jobs:
       # -------------------------------
       - name: Fail job if violations exist
         run: |
-          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
+          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.html \
           && exit 1 \
           || echo "✅ No violations found"
 
