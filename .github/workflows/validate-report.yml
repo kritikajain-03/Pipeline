@@ -34,22 +34,14 @@ jobs:
       # Run Salesforce Code Analyzer
       # -------------------------------
       - name: Run Salesforce Code Analyzer
-        id: run_analyzer
         run: |
           sf code-analyzer run \
             --workspace . \
             --target force-app/main/default \
+            --view detail \
             --output-file sfca_results.sarif \
             --output-file sfca_results.html
 
-      # -------------------------------
-      # Post Results to GitHub Job Summary
-      # -------------------------------
-      - name: Post Results to Summary
-        if: always()
-        run: |
-          echo "## Salesforce Code Analyzer Results" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Scan complete. See attached artifacts for full HTML report." >> $GITHUB_STEP_SUMMARY
 
       # -------------------------------
       # Fail if ANY violations exist
