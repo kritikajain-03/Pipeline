@@ -11,7 +11,7 @@ public class DummyPipelineCheckTest {
     static void testSubtractMethod() {
         Integer result = DummyPipelineCheck.subtract(10, 4);
         System.assertEquals(6, result, 'Subtraction result is incorrect');
-
+kjhgfc
         
     }
 }
