@@ -41,7 +41,8 @@ jobs:
 
 
 
-      - name: Run Salesforce Code Analyzer
+      - name: Run Salesforce Code 
+        if: ${{ env.CHANGED_FILES != '' }}
         id: run-code-analyzer
         uses: forcedotcom/run-code-analyzer@v2
         with:
