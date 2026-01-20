@@ -11,16 +11,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # -------------------------------
+      # Checkout repository
+      # -------------------------------
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Install Salesforce CLI and Code Analyzer
+      # -------------------------------
+      # Install Salesforce CLI & Analyzer
+      # -------------------------------
+      - name: Install Salesforce CLI and Analyzer
         run: |
           npm install -g @salesforce/cli@latest
           sf plugins install code-analyzer@latest
 
       # -------------------------------
-      # Run Salesforce Code Analyzer (HTML only)
+      # Run Salesforce Code Analyzer
       # -------------------------------
       - name: Run Salesforce Code Analyzer
         run: |
@@ -28,33 +34,26 @@ jobs:
             --workspace . \
             --target force-app/main/default \
             --view detail \
-            --format html \
-            --outfile sfca_results.html
+            --output-file sfca_results.sarif \
+            --output-file sfca_results.html
 
       # -------------------------------
-      # Fail job if violations exist (HTML-based)
+      # Fail if ANY violations exist
       # -------------------------------
       - name: Fail job if violations exist
         run: |
-          if [ ! -f sfca_results.html ]; then
-            echo "❌ HTML report not found"
-            exit 1
-          fi
-
-          # Basic violation detection from HTML
-          if grep -qi "violation" sfca_results.html; then
-            echo "❌ Violations found"
-            exit 1
-          else
-            echo "✅ No violations found"
-          fi
+          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
+          && exit 1 \
+          || echo "✅ No violations found"
 
       # -------------------------------
-      # Upload HTML report
+      # Upload results (HTML + SARIF)
       # -------------------------------
-      - name: Upload HTML report
+      - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: salesforce-code-analyzer-html-report
-          path: sfca_results.html
+          name: salesforce-code-analyzer-results
+          path: |
+            sfca_results.sarif
+            sfca_results.html
