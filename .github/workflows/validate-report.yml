@@ -41,15 +41,22 @@ jobs:
       #       --view detail \
       #       --output-file sfca_results.sarif \
       #       --output-file sfca_results.html
-      - name: Run Salesforce Code Analyzer (changed files only)
+      - name: Run Salesforce Code Analyzer
         uses: forcedotcom/run-code-analyzer@v2
         with:
-          run-arguments: >
-            --target  force-app/main/default \
+          run-arguments: |
+            --workspace .
+            --target force-app/main/default
             --view detail
             --output-file sfca_results.html
           results-artifact-name: salesforce-code-analyzer-results
           github-token: ${{ github.token }}
+
+
+      # - name: Upload SARIF to GitHub
+      #   uses: github/codeql-action/upload-sarif@v3
+      #   with:
+      #     sarif_file: sfca_results.sarif
 
       # -------------------------------
       # Fail if ANY violations exist
