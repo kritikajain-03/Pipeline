@@ -30,45 +30,34 @@ jobs:
           sf plugins install code-analyzer@latest
 
       # changed file
-      - name: Get changed Apex files
+      - name: Get all changed files
         id: changed
         run: |
+          # Fetch base branch
+          git fetch origin ${{ github.base_ref }}
+
+          # Get all changed files under force-app/main/default/
           CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
-            | grep '^force-app/main/default/' || true)
-      
-          # join lines with spaces
-          CHANGED_FILES=$(echo "$CHANGED_FILES" | tr '\n' ' ' | sed 's/ $//')
-      
-          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
-          echo "Changed files: $CHANGED_FILES"
-        
-      # -------------------------------
-      # Run Salesforce Code Analyzer(without --rule-selector sfge )
-      # -------------------------------
-      - name: Run Salesforce Code Analyzer (changed files only)
-        if: ${{ env.CHANGED_FILES != '' }}
+            | grep '^force-app/main/default/' || true)>> $GITHUB_ENV
+
+
+
+      - name: Run Salesforce Code Analyzer
+        id: run-code-analyzer
         uses: forcedotcom/run-code-analyzer@v2
         with:
-          run-arguments: 
-            --workspace . --target ${{ env.CHANGED_FILES }} 
-            --view detail 
-            --output-file sfca_results.html 
-            --output-file sfca_results.json
-          results-artifact-name: salesforce-code-analyzer-results
-          github-token: ${{ github.token }}
+            run-arguments: --workspace .${{ env.CHANGED_FILES }} --config-file code.yml --view detail --output-file sfca_results.html --output-file sfca_results.sarif
+            results-artifact-name: salesforce-code-analyzer-results
+            github-token: ${{ github.token }}
      
       # -------------------------------
       # Fail if ANY violations exist
       # -------------------------------
-      # - name: Fail job if violations exist
-      #   run: |
-      #     jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.json \
-      #     && exit 1 \
-      #     || echo "✅ No violations found"
-
-
       - name: Fail job if violations exist
         run: |
-          jq -e '[.runs[].results[]?] | length > 0' sfca_results.json \
+          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
           && exit 1 \
           || echo "✅ No violations found"
+
+
+
