@@ -45,8 +45,7 @@ jobs:
         uses: forcedotcom/run-code-analyzer@v2
         with:
           run-arguments: |
-            --workspace .
-            --target force-app/main/default
+            --workspace . force-app/main/default
             --view detail
             --output-file sfca_results.html
           results-artifact-name: salesforce-code-analyzer-results
