@@ -6,10 +6,7 @@ public class DummyPipelineCheckTest {
         Integer result = DummyPipelineCheck.add(5, 3);
         System.assertEquals(8, result, 'Addition result is incorrect');
     }
-
-
-    
-
+ggh
     
     @IsTest   
 
