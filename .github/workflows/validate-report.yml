@@ -1,0 +1,50 @@
+name: Salesforce Code Analyzer Workflow
+
+on:
+  pull_request:
+    paths:
+      - 'force-app/main/default/**'
+      - 'code-analyzer.yml'
+
+jobs:
+  sfca:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Salesforce CLI and Analyzer
+        run: |
+          npm install -g @salesforce/cli@latest
+          sf plugins install code-analyzer@latest
+
+      # -------------------------------
+      # Run Salesforce Code Analyzer
+      # -------------------------------
+      - name: Run Salesforce Code Analyzer
+        run: |
+          sf code-analyzer run \
+            --workspace . \
+            --target force-app/main/default \
+            --view detail \
+            --output-file sfca_results.sarif
+
+      # -------------------------------
+      # Exit 1 if ANY violation exists
+      # -------------------------------
+      - name: Fail job if violations exist
+        run: |
+          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
+          && exit 1 \
+          || echo "✅ No violations found"
+
+      # -------------------------------
+      # Upload results
+      # -------------------------------
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: salesforce-code-analyzer-results
+          path: sfca_results.sarif
