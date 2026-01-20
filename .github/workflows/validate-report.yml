@@ -29,28 +29,46 @@ jobs:
           npm install -g @salesforce/cli@latest
           sf plugins install code-analyzer@latest
 
-
+      # changed file
+      - name: Get changed Apex files
+        id: changed
+        run: |
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep '^force-app/main/default/' || true)
+      
+          # join lines with spaces
+          CHANGED_FILES=$(echo "$CHANGED_FILES" | tr '\n' ' ' | sed 's/ $//')
+      
+          echo "CHANGED_FILES=$CHANGED_FILES" >> $GITHUB_ENV
+          echo "Changed files: $CHANGED_FILES"
+        
       # -------------------------------
-      # Run Salesforce Code Analyzer
+      # Run Salesforce Code Analyzer(without --rule-selector sfge )
       # -------------------------------
       - name: Run Salesforce Code Analyzer (changed files only)
+        if: ${{ env.CHANGED_FILES != '' }}
         uses: forcedotcom/run-code-analyzer@v2
         with:
-          run-arguments: >
-            --workspace .
-            --view detail
-            --output-file sfca_results.sarif
-            --output-file sfca_results.html
+          run-arguments: 
+            --workspace . --target ${{ env.CHANGED_FILES }} 
+            --view detail 
+            --output-file sfca_results.html 
+            --output-file sfca_results.json
           results-artifact-name: salesforce-code-analyzer-results
           github-token: ${{ github.token }}
      
-
-
       # -------------------------------
       # Fail if ANY violations exist
       # -------------------------------
+      # - name: Fail job if violations exist
+      #   run: |
+      #     jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.json \
+      #     && exit 1 \
+      #     || echo "✅ No violations found"
+
+
       - name: Fail job if violations exist
         run: |
-          jq -e '[.runs // [] | .[].results // []] | flatten | length > 0' sfca_results.sarif \
+          jq -e '[.runs[].results[]?] | length > 0' sfca_results.json \
           && exit 1 \
           || echo "✅ No violations found"
